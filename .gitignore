@@ -1,0 +1,16 @@
+# Documentation-only mirror: implementation and build outputs are forbidden.
+/rust/
+/schemas/
+/scripts/
+/ts/
+/node_modules/
+target/
+dist/
+.env
+.env.*
+*.pem
+*.key
+.schema-tool-generate.lock
+.idea/
+.vscode/
+.DS_Store

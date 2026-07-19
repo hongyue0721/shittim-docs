@@ -1,0 +1,99 @@
+# ADR-0002：Schema 生成与兼容策略
+
+- 状态：accepted
+- 日期：2026-07-16
+- 修订：2026-07-19（闭合首批12 Schema与task creation fixture合同；schema-tool library、production empty stage gate、中立pointer/validate/canonicalize CLI、首批12项source/manifest entries/generated Rust root types及三份official fixtures/harness已落地，production bindings仍为空）
+
+## 背景
+
+当前规范要求区分两代及其实现阶段：
+
+- active TaskCreateRequestV2 root-only、以及Approval/PermissionDecision与Causation/Event/Audit相关后续v2的合同已定义；本批12项中的TaskCreate/Envelope及proposal/allocation相关Schema source、manifest entries与generated Rust root types已落地，production MethodVersionBindings仍为空。其余后续v2仍按各自合同推进，不能由本批12项的类型产物推导出repository或runtime完成；
+- manifest当前共有53项（41 retained + 12 component-native）。41项retained source/生成类型保持不变，但lifecycle必须逐Schema/逐method判断：retained `TaskCreateRequestV1`、`KcpCommandEnvelopeV1`/`KcpQueryEnvelopeV1`标`legacy-validation-only`，`TaskCreateResponseV1`标`legacy-read-only`，其余共享v1按引用方合同继续active。禁止写成“所有v1都legacy”。
+
+所有新breaking结构仍必须遵循本ADR的唯一source、manifest版本、RFC8785与生成规则。不得手写v2类型，也不得在v1 Schema上叠加可选字段形成双重production shape。
+
+## 决策
+
+1. 正式 Schema 使用 **JSON Schema Draft 2020-12**。
+2. 人工维护的唯一源位于 `schemas/source/`；`schemas/manifest.json` 记录 `$id`、schema version、兼容关系和生成目标。
+3. Rust/TypeScript/SDK 类型、validator 与可生成 API reference 片段都从 source schema 生成；生成目录标记 `GENERATED`，禁止手改。
+4. canonical JSON 使用 **RFC 8785 JCS**；契约未另行指定时 hash 使用 SHA-256 小写十六进制。
+5. KCP Envelope 使用 `protocol_version`，payload/持久对象/Event payload 使用 `schema_version`，两者不得混用。
+6. 每个 Schema 通过 `additionalProperties` 或 `unevaluatedProperties` 明确未知字段策略；未知 enum、Policy condition 和权限语义不能默认映射为 allow。
+7. CI 运行 schema meta-validation、唯一 `$id`、完整 `$ref`、示例校验、兼容检查和重复生成；第二次生成必须 byte-for-byte 无变化，生成后工作树必须 clean。
+8. `SchemaGraph` IR 必须原生表达 `TaggedUnion`，不能把判别联合 lower 成“全部 optional 的 object”再交给 repository 补救。`TaggedUnion` 至少保存 discriminator 属性、每个 branch 的 const tag、branch object identity 与 branch-local required/nullable/unknown-field规则，并实施：
+   - discriminator enum 与 branch const **双射**：无缺支、无重复 tag、无多余 enum；
+   - branch discriminator 必须 required 且为单一 const；branch 间共享字段只有 wire 约束完全相同时才可提升；
+   - 支持 nested tagged union，例如 Approval v2 的外层 `record_kind` 与内层 `subject.subject_kind`；
+   - Rust renderer 生成 `#[serde(tag = "...")]` enum（必要时配合 content/newtype），不得生成可同时构造多 branch 的 optional struct；未来 TypeScript renderer生成 discriminated union，必须消费同一 IR，不重新推断；
+   - symbol collision、branch name collision、discriminator/property collision、递归 direct-layout cycle、无法证明 branch 双射或目标语言无法保真时整体 fail closed，不写部分生成物；
+   - recursive tagged union 参与既有 SCC/layout 分析；Rust 只在 direct recursive edge 上 Box，TypeScript 保持结构递归；
+   - 自动测试覆盖单层/嵌套联合、零/多 discriminator、重复 const、enum 缺支/多支、branch unknown field、Rust serde round-trip/negative decode、未来 TS narrowing，以及生成两次稳定性。
+9. 方法payload lifecycle由manifest-derived `MethodVersionBinding`生成，ADR不手写第二份运行时目录。字段固定为`family,method,active_request_versions,legacy_validation_versions,request_schema_id_by_version,response_schema_id_by_version`；完整validator、canonical排序、entry closure与八方法目标以IC §13.5为准。active family authority不得按Envelope ID suffix推断，而是由registry中component/kind/title/exact V2 ID/version/compatibility全部匹配的Command/Query Envelope各唯一选出，读取其root discriminator enum；0或多候选fail closed，retained v1 Envelope不是active authority。binding expected set直接从这些registry facts派生，不读取generated catalog形成循环。generated active常量固定为`KCP_ENVELOPE_AUTHORITY_COMMAND_METHODS`、`KCP_ENVELOPE_AUTHORITY_QUERY_METHODS`、`KCP_ENVELOPE_AUTHORITY_METHODS`，不得再用`KCP_V1_METHODS`指代active总目录。实现分两阶段：Schema/工具阶段的通用loader必须接受并完整验证合法非空synthetic 8-method registry；`validate_production_manifest_stage`由check/generate在load后、plan/render前调用，单独断言production `schemas/manifest.json`仍为`[]`，synthetic registry不走该stage gate；只有`V2ProductionWriteCutover`才启用production非空binding。禁止路径/env隐式特判；binding catalog只生成library facts，不代表dispatcher、handler或server可用。
+10. manifest namespace已迁移为schema_version `2`：`id_base=https://schemas.shittim.local/`；既有41项source `$id`、component ownership与bytes继续由不可变ledger作为生产gate。新component-native ID一般固定为title-derived `https://schemas.shittim.local/<component>/<snake_case_name>/v<version>`，source精确镜像`schemas/source/<component>/<snake_case_name>.v<version>.json`；KCP envelope由hard gate按`component=kcp`、`kind=envelope`及精确title去掉领域前缀`Kcp`，规范stem固定为`command_envelope`/`query_envelope`，对应`KcpCommandEnvelopeV2`→`https://schemas.shittim.local/kcp/command_envelope/v2` + `schemas/source/kcp/command_envelope.v2.json`、`KcpQueryEnvelopeV2`→`https://schemas.shittim.local/kcp/query_envelope/v2` + `schemas/source/kcp/query_envelope.v2.json`；不得生成`kcp_kcp...`。这不是任意例外，而是component已编码kcp命名空间的规范stem规则。URL无query/fragment/percent encoding/dot/empty/额外segment/`.json`后缀，ID/source/title/entry/root const版本一致，compatibility命中正式五值，新ID不进41项ledger。exact name/segments/source mirror/version/root const/compatibility由`SchemaRegistry::load`硬门验证；所有synthetic/test manifest同样只用五值，无测试旁路。通用loader接受合法非空synthetic registry；production empty只由`validate_production_manifest_stage`在production CLI check/generate的load后、plan/render前断言，非空synthetic end-to-end plan/render测试走library API与显式non-production registry profile，不调用production CLI stage gate，且禁止路径/env/fixture目录名/调用栈特判。
+11. `generate`在registry/plan/render全部成功后，以当前**单artifact-root、Linux真机验证**的可恢复transaction提交；`ArtifactPlan`要求distinct roots恰好一个，0或多root明确unsupported，未来multi-root必须设计新版本状态机与独立验收。repo root持久lock file使用Rust 1.97 `File::try_lock` OS advisory lock，文件描述符锁是权威，owner metadata仅诊断；lock file不删除，不依赖PID或stale目录回收。进入边界先在锁内恢复journal，再写durable `Preparing` journal，随后在artifact root同parent filesystem建立固定transaction-id sibling stage/backup/rollback-discard，stage复制并保留非planned文件、覆盖planned bytes并fsync tree；更新`Prepared`后执行old root→backup、stage→root，每次rename后fsync parent。rollback先durable进入`RollingBack`，把new root rename到discard、恢复backup、再清discard，任意crash点可重复恢复且不会删除已恢复旧root。committed journal的temp write/fsync/rename/dir-fsync区分“rename未发生”与“rename已发生但durability不确定”；后者返回`commit outcome uncertain`并绝不destructive rollback，下次按可见journal恢复。durable `Committed`后才清stage/backup/discard/journal；cleanup失败可见且可恢复。正式journal损坏fail closed并保留路径；仅在持锁且无正式journal时扫描固定temp prefix、验证regular non-symlink后清理。成功可留下持久lock file，但无其它transaction residue。当前conformance边界是Linux directory fsync + standard advisory lock真机验证；其它平台未完成，必须fail closed。该锁只协调schema-tool generator；同用户恶意并发替换filesystem路径不在安全边界，代码仍在启动与每次操作前对symlink/类型fail closed，但不宣称消除TOCTOU。
+
+当前代码事实：`SchemaRegistry::load`已接受并完整验证合法非空binding；component-native exact硬门与正式五值compatibility已落地；active family structure authority由V2 Envelope发现并生成`KCP_ENVELOPE_AUTHORITY_METHODS`，retained v1为`KCP_LEGACY_V1_*`；production empty由`validate_production_manifest_stage`在CLI check/generate挂载。production共有53项（41 retained + 12 component-native），首批12项source/entries/generated Rust root types已落地；统一Draft2020-12 format assertion、language-neutral Alias resolution/audit、root transparent alias、通用`decode_validated`与open-object无损flatten已落地；三份official task-creation fixtures及共享wrapper/production owner/独立CLI oracle harness已落地。production bindings仍为空，runtime repository/handler/materializer/cutover仍未完成。
+
+### Artifact transaction conformance boundary（2026-07-18 独立验收）
+
+Transaction 的边界从成功取得 advisory FD lock 且 owner metadata 已发布之后才开始。lock file 的 open/create/type/symlink/try-lock/owner metadata I/O 属于独立 `LockPort` conformance，不纳入 `TransactionFs` 矩阵。FD lock 是唯一权威；owner 只用于诊断，既不 unlink lock file，也不按 PID 或“stale”目录回收。
+
+`TransactionFs` 的验收单位是一次有语义的 mutation/durability operation boundary，而不是声称枚举每个底层 OS syscall。read 与 metadata inspection 不进入 mutation/durability fault 闭集。trace 使用 typed `OperationEvent`：semantic phase、operation、Before/AfterSuccess、logical path roles、journal target phase；只有重复文件/目录操作使用动态 occurrence，不能由 occurrence 推断 phase。copy traversal 必须稳定排序。
+
+正式 journal 的 `Committed` rename 是提交点：该 rename 前最终 existing=Old/absent=Absent，之后最终=New。oracle 必须断言即时完整 snapshot、返回的结构化 disposition、recover#1 精确路线/终态和 recover#2 Noop（无 mutation/durability event）；不得接受 `old|new`。FailureDisposition 为 `NoMutation`、`RolledBackBeforeReturn`、`RecoveryRequired { RestoreOriginal | CleanResidue }`、`CommitOutcomeUncertain`、`CleanupDeferred`、`StoredStateInvalid`。后者表示正式journal存在但无法解码或验证，恢复必须fail closed且不得授权rollback或cleanup。crash sentinel 单独传播。CrashBefore 不执行 operation，CrashAfterSuccess 执行后传播 sentinel，IoNoEffect 在具体 operation 返回 error 前不产生 effect；不得用 after hook 冒充 I/O error。partial I/O 只有为 journal temp/stage write/copy/remove 提供明确 fake effect 才可声明覆盖。该 control-flow/fault conformance 不等同真实断电介质模型。
+
+### JSON Schema source profile（`oneOf` → `TypeShape::TaggedUnion`）
+
+生成器只在source满足下列**全部**条件时把对象联合lower为`TypeShape::TaggedUnion`：
+
+1. union节点是object语义的`oneOf`，每个branch经完整`$ref`解析后都是封闭object；`$ref`按registry canonical URL + RFC6901 pointer解析，relative/local/absolute规则沿用既有graph，无法解析或跨target缺依赖即fail closed；
+2. discriminator属性名在每个branch完全相同，每branch该属性都列入`required`且Schema为唯一string `const`；所有const互异，并与union层声明的discriminator enum（若存在）精确双射；
+3. 每branch明确`additionalProperties:false`，或union组合层使用可证明对全部branch生效的`unevaluatedProperties:false`；混合开放/封闭、依赖validator annotation但IR无法证明、branch patternProperties/additional schema导致未知字段策略不保真，均unsupported；
+4. 每个JSON实例按tag精确命中一个branch；0/multi match、重复const、缺branch、多余enum、branch discriminator不required/非const均fail closed；branch identity与tag一一对应；
+5. nested union递归应用同一profile，每层独立保存自己的discriminator/branch map；普通nullable `oneOf:[{$ref:T},{type:null}]`、非判别业务oneOf和conditional Envelope payload analysis都不是TaggedUnion。nullable继续lower为Nullable，Envelope analysis继续按family method/payload `$ref`双射独立执行，二者不能互相猜测；
+6. branch公共字段只有wire shape、required/nullability、default/const/format、unknown-field策略完全一致才可在renderer内部共享；IR仍保留branch-local事实，不能生成“全部optional object”；
+7. unsupported shape（数组branch、混合primitive/object、多个候选discriminator、discriminator藏在allOf且无法唯一归属、动态/recursive ref无法闭合、property collision、target语言不可保真）整体返回结构化generation error，不输出部分artifact。
+
+成功lower结果至少为`TypeShape::TaggedUnion { discriminator, branches: [{tag, object_type_id}], unknown_field_policy }`；nested branch引用同一target graph节点。Rust renderer生成serde enum并严格拒绝unknown/missing/duplicate tag；TypeScript renderer从同一IR生成discriminated union，不能重新分析source。
+
+测试矩阵必须包括：inline与`$ref` branch正例、nested record/subject union、union层`unevaluatedProperties:false`和branch层`additionalProperties:false`正例；missing/多tag、重复const、enum缺/多支、开放branch、unresolved/cross-target ref、ordinary nullable oneOf不误判、non-discriminated oneOf拒绝、Envelope conditional分析结果不因TaggedUnion改变；Rust round-trip/negative decode、TS narrowing、recursive SCC layout、两次生成byte-identical。
+
+### 实际落地选型（首批）
+
+| 项 | 选择 |
+|---|---|
+| Rust 生成器 | 自有受限确定性 codegen（`schema-tool`），**不**采用 typify 作为正式路径 |
+| 运行时校验 | `jsonschema` **0.28**，Draft 2020-12 |
+| 生成目标 crate | `kernel-contracts`（生成类型/目录 + typed envelope decode + `validate_json` + JCS/SHA-256 API） |
+| CLI | `schema-tool`：`generate` / `check` / `validate` / `canonicalize`。`validate`与`canonicalize`已支持strict RFC6901 `--pointer`；`canonicalize`提供raw Bytes（默认）、`--hex`、`--hash`三种无newline模式，`--hex`与`--hash`由Clap互斥。library公开cycle无关selection、结构化syntax/evaluation错误及通用`add|replace` mutation；工具只做中立JSON选择/Schema验证/JCS，不实现Task normalize |
+| 入口脚本 | `scripts/check-schema.sh`（仓库当前统一门：先 Node/pnpm 硬门 `check-node-toolchain.mjs`，再 Rust generate/check/fmt/clippy/test/generated drift，最后 Node `update-file-manifest.mjs --check`；清单本身非 Schema 产物；脚本名历史保留，**不是** Rust-only） |
+| JCS | `serde_json_canonicalizer` 0.3.2（RFC 8785）+ `sha2` 0.10 |
+| TS 生成 | 尚未实现 |
+| 共享 IR / 目标模型 | 已落地：target-scoped language-neutral `TargetContractGraph`；`ContractTypeId` = schema `$id` + 严格 RFC6901 JSON Pointer（≠ `RustDeclarationId`）；use-site lineage 投影多个 Rust declarations；`url`+percent-encoding 解析 local/absolute/relative `$ref`；SCC Box 递归 layout；`GenerationTarget`（rust/typescript，无 ALL 闭集）+ TargetPlan 闭包；Rust projection renderer 已实现；TS renderer 仍未实现；response envelope intentionally untyped |
+
+生成器流水线：`SchemaRegistry -> ValidatedRegistry<Production|Synthetic> -> TargetPlan/TargetSchemaSet -> target-scoped IR (TargetContractGraph) -> RustProjection (single project_rust + recursive SCC layout) -> ArtifactPlan::try_new -> recoverable ArtifactTransaction`。IR identity 由 schema `$id` + 严格 JSON Pointer 组成（root pointer 为空；`$defs`/inline 使用真实 definition pointer），禁止以语言名字作 key；中立 graph 不得携带 rust/typescript 名、logical_title/hint/pascal、include 路径或 generated 路径。`ContractTypeId` 与 `RustDeclarationId` 分离，Rust renderer声明身份采用完整全序 **`SharedRoot > SharedCanonicalFragment > NominalInstantiation`**：whole-schema `$ref`总是共享`SharedRoot`；任意named canonical fragment被两个或更多source roots实际投影使用时，`SharedCanonicalFragment`在该canonical的所有use-site统一生效，覆盖任一root内原本可能存在的same-root nominal clones，并使用host-derived symbol；只有一个source root使用时，才按`NominalInstantiation { canonical, use_site_lineage: Vec<SourceUseSite> }`克隆。`active_by_canonical`仅负责递归回边复用，不能改变该全序。此全序是Rust renderer语言策略，不改变neutral `ContractTypeId`；新增第二root引用可能替换既有nominal公共符号和字段类型，是生成公共API的breaking surface，必须通过generated drift与review显式接受，不能因neutral identity不变而判为无变化。manifest source先经`SchemaSourcePath`验证和filesystem confinement，renderer/catalog只消费该已验证事实，不重新信任原始字符串。`manifest.id_base` 是权威 URL path 命名空间：必须 canonical absolute `http(s)`、无 fragment、以 `/` 结尾；每个 entry `$id` 必须落在该 namespace（scheme/host/port/path 组件语义，禁止裸 `starts_with` 前缀伪装）。`$ref` 解析：`Url::join` 支持 local/absolute/relative；fragment 先严格 `%HH` 校验，再 percent-decode UTF-8 一次，再 RFC 6901 解析；pointer 本身允许字面 `%`；named anchor与动态/recursive identity/ref关键字、nested非root `$id`、root非canonical absolute id均在registry load时fail closed；relative external解析后命中registry即可，但target闭包仍强制依赖同target。递归 layout：Named/Nullable/Optional 为 direct 边，Array 为 indirect；同 SCC direct Named 包装 `Box`（optional 钉死 `Option<Box<T>>`，禁止 `Box<Option` / 仅因递归的 `Vec<Box`）。生成器必须：对当前支持的 shape 关键字保真 lower；多非 null `type` union、歧义 `oneOf`、未知 shape 关键字明确失败；只有 Schema 显式 `additionalProperties: true` 的 free-form object 可成为 `AnyJson`；生成文件含 GENERATED 标识；当前 41 无环输出与 HEAD bytes 一致。cross-root canonical发现的target-use walker对`TypeShape`和`TypeExpr`使用无通配分支的exhaustive match；新增variant必须触发编译失败并更新walker，synthetic测试覆盖Object、TaggedUnion、Alias、Array、Nullable及TypeExpr容器的当前嵌套边。该明确重复只服务renderer投影使用关系，不重写稳定projector。`schemas/manifest.json` 的 `generation_targets` 必须非空、无重复、按 canonical 顺序（rust then typescript）；每 target 显式 roots，外部 `$ref`（含 relative）与 local fragment 递归依赖及 envelope payload 必须同 target 闭包。`ArtifactPlan` 只能经 `try_new` 构造：校验**恰好一个** artifact root、path/duplicate/component-safe 并计算 planned directory prefixes；path/root component-safe（拒绝 `generated_evil` 前缀伪装）、traversal/absolute/duplicate 与 unplanned dir/symlink/extra/missing 均 fail closed。plan/render完成后进入Linux-verified单roottransaction：持久lock file以OS advisory file lock协调generator，`Preparing/Prepared/RollingBack/Committed` durable journal与root同filesystem sibling stage/backup/rollback-discard实现crash-idempotent恢复；committed journal rename后dir fsync不确定返回outcome uncertain并禁止回滚。未来multi-root与其它平台port未实现。stage复制保留非planned文件，check仍负责exact set。`RustProjection` 只计算一次，types/typed 从同一实例渲染；catalog 直接读 graph。同 target 下不同 declaration 映射到同 symbol 时 renderer 必须列出 canonical/use-site/name 失败。未来 TS 不得复制 lowering 语义，只能消费同一 target-scoped graph。
+
+KCP Command/Query 与 Event 的条件 payload typed binding：唯一 envelope 分析——0 个 whole-schema payload `$ref` => untyped `None`；≥1 则所有 branch 完整且与 discriminator enum 双射，否则 error。Response envelope intentionally untyped。typed/types 共用同一 projection/layout，不平行 lower wire 字段。不得使用手写方法目录、expected 列表或 typed 模板。const 字段生成单值类型，JSON null 生成 `NullOnly`。string enum 在通用 projection 路径生成 declaration-order `pub const ALL: &'static [Self]`（与 variants/`as_str` 同一 mapping；const 不生成 ALL；nullable 过滤 null），并在 `types.rs` 自动生成 string enum 合同测试；`domain-task` 的 NxN、terminal 和 proptest 遍历直接消费 `TaskStatus::ALL` / `ActionStatus::ALL`，不再维护手写完整状态目录。
+
+条件关键字 `if`/`then`/`else`/`allOf` 保留给运行时校验，不靠手写平行业务规则绕过 Schema。
+
+### 首批12 Schema的后续实现合同
+
+首批Schema/工具实现已精确落地：InputContentOriginV1、InputTaskScopeV1、TaskCreateRequestV2、NormalizedRootTaskCreatePayloadV2、RootTaskCreateIdempotencyProjectionV1、TaskCreateResponseV2、RootTaskCreateAllocationV2、ChildTaskProposalV1、NormalizedChildTaskProposalV1、ChildTaskMaterializationAllocationV1、KcpCommandEnvelopeV2、KcpQueryEnvelopeV2。title均带版本后缀。`NormalizedRootTaskCreatePayloadV2#/$defs`作为canonical task-create proposal field contract中立宿主，宿主properties用local fragment，另三root用absolute fragment；禁止第13个Schema或复制约束。所有string数组可空、元素non-empty、保序保重复且无`uniqueItems`；非null `risk_hint`与`upstream_stable_id`也non-empty，普通字符串不trim。`InputTaskScopeV1.expires_at`现行source使用Draft 2020-12双门：`format: date-time`负责日期/时间/offset合法，pattern `^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-5][0-9](?:\.0+)?(?:Z|[+-][0-9]{2}:[0-9]{2})$`固定大写T/Z、秒范围及零fraction；不用custom format。逐source依赖表以IC §13.6为准，后续修改必须持续通过生成漂移与Conformance。
+
+两新Envelope保持`protocol_version=1.0`，各有0个method payload conditional `$ref`；只禁止`TypedKcpCommandEnvelopeV2`、`TypedKcpQueryEnvelopeV2`及其0-ref同义wrapper，不笼统禁止其它`Typed*V2`。payload业务Schema由binding第二阶段选择。KcpQueryEnvelopeV2虽query payload仍v1，但验证架构从method-only conditional改为family+method+version两阶段，故仍是breaking replacement。TaskCreateResponseV2.task引用retained active TaskSpec v1，不虚构TaskSpec v2。projection/allocation自身schema_version及精确ID/compatibility矩阵见IC §5.3、§5.4、§13.6。首批12 Schema source/manifest entries与generated Rust types已落地；production bindings仍为空。fixture路径固定为root `schemas/fixtures/kcp/task_create_normalized_hash.v2.json`、child `schemas/fixtures/task/child_task_proposal_normalized_hash.v1.json`、allocation `schemas/fixtures/task/task_creation_allocations.v1.json`；wrapper是测试制品而非Schema。正式task creation owner `kernel-task-creation` pure library已实现root/child proposal normalize、root receipt/idempotency、child proposal/receipt hash、root/child allocation validation；authorization projections另切片。URI实现继续复用`domain-policy`唯一权威，allocation external refs使用typed Rust snapshots且不进manifest。`expires_at`双门Schema、schema-tool通用strict pointer/mutation、validate/canonicalize pointer及hex/hash模式，以及三份official fixtures和共享wrapper/production owner/独立CLI oracle harness均已实现；runtime repository/handler/materializer/cutover仍未完成。
+
+## 备选方案
+
+- 以 Rust struct 为唯一源：拒绝，跨语言和 JSON Schema 表达受实现语言绑架。
+- 以 TypeScript interface 为唯一源：同样拒绝。
+- 使用普通 `JSON.stringify`/serde 输出做 hash：拒绝，map 顺序和数值表示无法形成跨语言稳定契约。
+- 手写 SDK 类型：拒绝，违反单一生成源。
+- 直接使用 typify 0.7.0：评估后未采用为正式路径，因其对 2020-12 条件 Schema 与项目约束的保真度不足；改为自有受限生成器 + jsonschema 运行时。
+
+## 影响
+
+- Schema 变更必须走 source → generate → check，不得手改 `generated/`。
+- 当前production共有53个manifest entry（41 retained + 12 component-native），只输出Rust四文件；manifest已升级为v2，使用root id_base、component namespace、`allowed_refs`、retained-ID ownership及不可变迁移ledger；41份retained source `$id`由fixture source hash持续证明相对迁移前基线字节不变。production `method_version_bindings: []`仍是当前阶段事实；首批12项source/entries/generated Rust root types已落地。library已实现通用非空validator、component-native exact、compatibility五值、binding/catalog生成与production stage gate，并完成共享format assertion配置、validated decode、Alias resolution/audit/root alias、open object无损typed round-trip及跨root canonical fragment单一Rust declaration投影；`expires_at`双门Schema、canonical timestamp API、`kernel-task-creation` pure library、schema-tool中立pointer/mutation/selected validate/canonicalize模式，以及三份task creation official fixtures/harness均已实现（production owner + 独立CLI Schema路径 + stored preimage自一致性共享唯一JCS authority）。repository/handler/materializer/cutover仍未完成。retained 4项lifecycle已按合同改标，对象版本不能按“全部v1=legacy”理解。TypeScript目标模型与闭包校验已具备，但TS代码生成尚未实现；未来renderer必须消费同一neutral Alias resolution事实，不得手写平行解析或类型。
