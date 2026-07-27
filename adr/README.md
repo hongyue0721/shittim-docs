@@ -20,6 +20,7 @@ ADR 记录规范允许范围内的已接受实施选择，不取代领域规范�
 - [ADR-0008：Active Event v2 Schema 与版本化统一 Outbox](0008-active-event-v2与版本化统一outbox.md) — accepted；**partial**（见 MATRIX/PROGRESS）；**部分被 ADR-0009 supersede**（§7 mixed transform 生产目的、§8 legacy Outbox production API）
 - [ADR-0009：v2 从零构建并取消 v1 数据迁移](0009-v2从零构建并取消v1数据迁移.md) — accepted；**partial**（见 MATRIX/PROGRESS）；作废 `V2ProductionWriteCutover`，建立 `V2InitialBuildActive`
 - [ADR-0010：Policy v2 终态与未投产旧合同直接退役](0010-policy-v2终态与未投产旧合同退役.md) — accepted；**implemented**；当前 Schema 基线 `80 = 38 retained + 42 component-native`
+- [ADR-0011：Action Lease 生命周期与 Stop Fence 原子语义](0011-lease生命周期与stop-fence原子语义.md) — accepted；**designed**（migration 0010 与 Lease/Stop owner 未实施）
 
 ## 规则
 

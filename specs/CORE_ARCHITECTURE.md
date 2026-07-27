@@ -758,7 +758,7 @@ Schema 通过顶层 required 字段保证显式事实，并拒绝 `policy_contex
 8. 进入 Security Mode `Restricted`；
 9. Emergency Stop 不依赖模型响应，完全由 agentd Kernel 执行。
 
-首批 KCP 的 `stop.activate` 就是 Emergency Stop 的公开触发入口；同一 Kernel 事务先持久化 Fence generation 与 `stop_fence.activated` 事件，再执行其余可取消/通知步骤。重复激活返回当前 generation，不重复创建 Fence。
+首批 KCP 的 `stop.activate` 就是 Emergency Stop 的公开触发入口；同一 Kernel 事务先持久化 Fence generation 与 `stop_fence.activated` 事件，再执行其余可取消/通知步骤。重复激活返回当前 generation，不重复创建 Fence。v1 的 SQLite 事务原子范围由 ADR-0011 §4 固定：Fence 单例 + Fence 事件 + 受影响副作用 Action 的 Lease/锁收敛与状态边（`leased → cancelled`、`in_flight → unknown_side_effect`）；Extension cancel、Task 状态迁移、Restricted Mode 与 Approval invalidation 是 post-commit 编排或后续切片，不在该事务内，也不得以降级形式伪装完成。
 
 ### 19.2 Kernel Stop Fence
 

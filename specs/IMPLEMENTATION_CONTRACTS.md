@@ -677,7 +677,9 @@ Kernel计算`ChildTaskDeltaProjectionV1`并取hash；child proposal hash固定�
 #### `stop.activate`
 
 - 属性：Command；Kernel Recovery Invariant，不通过普通 Policy 获得或拒绝授权；不得由外部内容伪造；
-- 幂等 scope：全局 Stop Fence generation。Fence 已激活时重复调用返回当前同一 generation，不重复产生状态转换事件；
+- 幂等 scope：全局 Stop Fence generation。Fence 已激活时重复调用返回当前同一 generation，不重复产生状态转换事件；v1 首次激活固定写入 `generation = 1`，重复激活只做 canonical readback 返回原 `generation/reason/activated_by/activated_at`，绝不 UPDATE 或递增 generation，也不消费新 allocation；
+- v1 原子范围（ADR-0011 §4）：单一 `BEGIN IMMEDIATE` 完成 Fence 单例 + 一条 `stop_fence.activated` + 受影响副作用 Action 的收敛——`leased → cancelled`（dispatch 未开始可证）与 `in_flight → unknown_side_effect`，各自原子删除 Lease/Resource Lock 并各发一条 `action.state_changed`。S0 只读诊断不受影响；`approved` 无 Lease 不迁移，由 Fence 在执行边界阻断。Extension cancel、Task 转 `paused | waiting_user`、Restricted Mode 与 Approval invalidation 均不在该事务内，是 post-commit 编排或后续切片；
+- 受影响集合只有进入事务后才能确定，因此每个受影响 Action 的 transition/event ID 由 caller 注入的 transaction-bound 纯内存 typed allocation source 在事务内产出（ADR-0011 §5），这是「所有 ID 由上层预分配」的唯一正式例外；
 - Request payload：`{ schema_version: 1, reason: <non-empty string>, origin_ref: <ContentOrigin id> | null }`；
 - Response payload：`{ schema_version: 1, active: true, generation: <positive integer>, activated_at: <RFC 3339 UTC>, activated_by: Actor }`；
 - 错误：`origin_not_found`、通用错误。
@@ -700,6 +702,8 @@ Kernel计算`ChildTaskDeltaProjectionV1`并取hash；child proposal hash固定�
 ```
 
 - 错误：通用 Envelope 错误。
+
+Fence 单例持久化 canonical Actor JSON + actor id 镜像 + entry point + `origin_ref` + `activated_at` + `reason`（ADR-0011 §6）；`activated_by` 从 canonical 快照构造，重启后不得从请求上下文猜回。
 
 首批 KCP **不提供**清除 Stop Fence 的方法。解除停止需要未来独立恢复契约、状态转换和测试，不得复用 `stop.activate` 参数或私有开关。
 
@@ -1227,6 +1231,8 @@ revision
 created_at / updated_at
 ```
 
+Lease 生命周期与持久化语义由 ADR-0011 拍板：内联 `lease` 字段与 Lease 关系行是同一事实的两个投影，只在 `leased | in_flight` 状态同存且逐字段相等（含 `generation == execution_generation`），其它状态两者同空，任何不一致为 `stored_data_invalid`。v1 持久化 Lease 的 `max_uses` 固定为 `1`（Schema 收紧随 migration 0010 同批落地），repository 拒绝其它值；不实现消费计数。`approved → leased` 创建 Lease 与全部 Resource Lock；`leased` 与 `in_flight` 的全部退出边都原子删除 Lease 并级联释放锁（completion 是正常消费，failed/unknown 是异常终结，都必须释放）。
+
 #### 6.5.1 `kernel.task/task.child.create`
 
 该Action的固定语义：
@@ -1440,6 +1446,8 @@ repository current-head查询/映射字段统一命名`current_head_ref`；它�
 
 每个方法在单一`BEGIN IMMEDIATE`中验证canonical subject equality、expected head CAS、record Schema、subject current revisions/hash、evidence/expiry；append immutable record(s)，更新唯一current-head映射，更新Action/Task current approval关联，撤销受影响Permission/Privilege/Action Lease，写Audit与规定Outbox。任一步失败全回滚。不得提供update/delete；不得按created_at/max(id)猜head；unique keys至少保证record id唯一、每approval_chain_id一个current_head_ref、`(approval_chain_id, predecessor_ref)`在非null predecessor下最多一个committed successor。CAS loser返回`approval_head_conflict`。
 
+invalidation/replacement 的 Action 侧闭包（ADR-0011 §3）固定为：链上 `approved` Action 不改状态，执行边界以 `approval_invalidated` 重门控，replacement 经新 approved resolution 后无需状态迁移即恢复可执行；链上 `leased` Action 同事务撤销 Lease/锁并驱动 `leased → cancelled`（`status==leased` 证明 dispatch 未开始）；`in_flight` Action 不打断（授权在 dispatch 时已消费，只有 Stop Fence 能中断）。禁止为此新增 `approved → pending` / `leased → pending` 边或伪装 `lease_expired`。
+
 `validate_usable_resolution`必须同时读取current head、subject当前事实、Action current PD、material hash、credential/evidence/challenge状态、resolution expiry与Stop Fence；任何不满足返回稳定错误，绝不自动fallback到更老approved record。
 
 #### 6.10.2 Identity repositories、Challenge终态与证据对象
@@ -1497,7 +1505,7 @@ implicit/default/explicit allow与Delegation authority不生成Approval。materi
 
 `ApprovalEventAllocationV1`是Approval repository三种head mutation命名owner的**正式required对象**：`event_id:UUID,correlation_id:opaque,dedup_key:opaque,changed_at:UTC-second,causation_ref:CausationRefV2`。`event_id`格式合法，`correlation_id`/`dedup_key`非空且独立，`changed_at`为本次业务head变化的唯一时间；`causation_ref`必须为v2正式branch并指向真实外部command/event/action，禁止指向Approval event、同chain或future对象。event ID、chain ID、record IDs、Action/PD IDs与causation所含ID必须按各自语义互异；只有CausationRef明确指向的既有外部事实可以重复引用，任何ID不得由request、chain、Task或idempotency key派生。所有值由上层分配；replay从已提交head mutation/Event读取原allocation，禁止重新分配或用“当前时间”重建。
 
-每个顶层 Approval/Policy repository 命令必须创建**唯一 transaction-bound typed UUID purpose collector**。该 collector 在 matcher、rate-limit consume、Challenge consume/expire、record/head/Audit/Event append、Action intent/CAS 或 Outbox append 中最早写入之前，登记本命令全部 allocations/mirrors，以及该命令实际读取、验证或消费的持久事实 UUID；按路径覆盖 Task/TaskScope/Action/current 与新 PermissionDecision/PolicyRule/Approval chain/request-resolution-invalidation/Challenge/Evidence/Credential/Causation/Audit/Event/ActionTransition，不要求无关路径伪读对象凑集合。复合命令（包括 evaluation+initial request、resolution+Action commit）的 nested prepare/validate/apply 只能借用同一个 collector，不得各自新建局部集合。相同 UUID 只有在指向**同一语义事实且同一 purpose**时可作为 mirror 重复登记；新 PermissionDecision allocation 与命令前 current PermissionDecision reference 属不同生命周期 purpose，必须互异。任一跨层碰撞在 matcher 或任何持久化写入前返回 `contract_invalid`，并保持 rate-limit、Challenge、PD/head/history、Audit、Action/intent/Outbox/sequence/position 全部零变化。
+每个顶层 Approval/Policy repository 命令必须创建**唯一 transaction-bound typed UUID purpose collector**。该 collector 在 matcher、rate-limit consume、Challenge consume/expire、record/head/Audit/Event append、Action intent/CAS 或 Outbox append 中最早写入之前，登记本命令全部 allocations/mirrors，以及该命令实际读取、验证或消费的持久事实 UUID；按路径覆盖 Task/TaskScope/Action/current 与新 PermissionDecision/PolicyRule/Approval chain/request-resolution-invalidation/Challenge/Evidence/Credential/Causation/Audit/Event/ActionTransition，不要求无关路径伪读对象凑集合。复合命令（包括 evaluation+initial request、resolution+Action commit）的 nested prepare/validate/apply 只能借用同一个 collector，不得各自新建局部集合。相同 UUID 只有在指向**同一语义事实且同一 purpose**时可作为 mirror 重复登记；新 PermissionDecision allocation 与命令前 current PermissionDecision reference 属不同生命周期 purpose，必须互异。任一跨层碰撞在 matcher 或任何持久化写入前返回 `contract_invalid`，并保持 rate-limit、Challenge、PD/head/history、Audit、Action/intent/Outbox/sequence/position 全部零变化。`activate_stop_fence` 的受影响 Action transition/event ID 由 transaction-bound 纯内存 typed allocation source 在事务内产出（ADR-0011 §5，集合不可预知的唯一正式例外），其产出同样登记进该命令唯一 collector。
 
 initial request、resolution、invalidation/replacement 三种head mutation的命名owner均**必须**接收该对象，且在同一`BEGIN IMMEDIATE`内消费其`event_id/correlation_id/dedup_key/changed_at/causation_ref`：成功head变化以`changed_at`投影record、Audit与Event的业务时间，写恰好一个`approval.state_changed`；CAS loser、validation/evidence失败和同事实replay不消费新allocation、不写新Event。Challenge失效Audit不使用本对象，因为Challenge不是Approval chain。
 
@@ -1584,7 +1592,9 @@ ID generator purpose闭集至少包含Task、TaskScope、ContentOrigin、KernelR
 
 | repository | 允许方法 |
 |---|---|
-| Action | `insert_pending`（已实现）、`get`（已实现）、policy binding orchestrator（`evaluate_action_permission` 经 crate-private bridge 原子提交 PD 绑定、Action 状态边与事件，已实现）、approval resolution orchestrator（`resolve_approval_and_commit_action` 在一个 savepoint 内解析 Approval、重新派生 usable proof 并驱动 `pending→approved`，已实现）、lease acquire/dispatch/release orchestrator（**未实现**）、child materializer（**未实现**）、recovery orchestrator（**未实现**）。所有 expected-revision/status CAS 都只是对应业务 owner 内部的私有机械实现细节，不得暴露为平行状态迁移入口 |
+| Action | `insert_pending`（已实现）、`get`（已实现）、policy binding orchestrator（`evaluate_action_permission` 经 crate-private bridge 原子提交 PD 绑定、Action 状态边与事件，已实现）、approval resolution orchestrator（`resolve_approval_and_commit_action` 在一个 savepoint 内解析 Approval、重新派生 usable proof 并驱动 `pending→approved`，已实现）、lease acquire/dispatch/release orchestrator（`acquire_lease` / `begin_dispatch` / `release_or_expire_lease`，语义见 ADR-0011 §1/§7，**未实现**）、child materializer（**未实现**）、recovery orchestrator（**未实现**）。所有 expected-revision/status CAS 都只是对应业务 owner 内部的私有机械实现细节，不得暴露为平行状态迁移入口 |
+| StopFence | `activate_stop_fence`（v1 原子范围与动态 allocation 见 ADR-0011 §4/§5，**未实现**）、`get_stop_fence`（严格只读，**未实现**）；不提供清除方法 |
+| ActionLease | `get_action_lease`（严格只读，与 Action 内联 lease 双源一致校验，**未实现**）；写路径只能经 Action lease orchestrator，无独立写入口 |
 | PermissionDecision | `append`、`get`、`get_current_for_action`、`validate_current_for_execution`；不可update/delete |
 | Approval | §6.10.1三种head mutation的命名owner、`get_record`、`get_current_head`、`list_history`、`validate_usable_resolution`；不可update/delete；不提供generic request append或legacy v1 production read/migration API |
 | ActionTransition | durable/recovery surface为§6.14的`insert_intent`、`get_intent`、`get_for_action_revision`、`reconcile_intent`；`mark_committed_inside`及Policy/Approval/未来Lease·child·Recovery typed bridge只允许crate-internal业务owner调用，不提供通用生产状态迁移入口 |

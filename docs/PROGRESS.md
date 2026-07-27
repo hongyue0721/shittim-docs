@@ -1,6 +1,6 @@
 # Shittim 实现进度
 
-> 状态日期：2026-07-27（`V2InitialBuildActive`：Policy v2 终态 + Action/PermissionDecision 原子绑定（migration 0009）+ Action 唯一状态事件权威 + post-Outbox 全量回滚证明 + Approval 操作授权闭合 + Challenge 过期与身份审计 + Approval 解析证据闭环 + 顶层命令 UUID 用途闭集已落地。切片 4c 原 11 项 High 已闭合 9 项，剩 Lease 关联撤销与真实远程验签 2 项；Lease/Stop Fence 完全缺失；§13.7 未闭合——child materializer 与五方法 handler 仍缺。）
+> 状态日期：2026-07-27（`V2InitialBuildActive`：Policy v2 终态 + Action/PermissionDecision 原子绑定（migration 0009）+ Action 唯一状态事件权威 + post-Outbox 全量回滚证明 + Approval 操作授权闭合 + Challenge 过期与身份审计 + Approval 解析证据闭环 + 顶层命令 UUID 用途闭集已落地。切片 4c 原 11 项 High 已闭合 9 项，剩 Lease 关联撤销与真实远程验签 2 项；Lease/Stop Fence 未实现，但 ADR-0011 已拍板 Lease 生命周期与 Stop 原子语义、蓝图已修订为 v2；§13.7 未闭合——child materializer 与五方法 handler 仍缺。）
 >
 > **新设备接力开发请先读 [`DEVELOPMENT_HANDOVER.md`](DEVELOPMENT_HANDOVER.md)**（环境准备、标准流程、切片 5/6 精确任务、验收债务与已知问题）。
 
@@ -66,7 +66,7 @@
 
 **未实现（不得宣称完成）**
 
-- **Lease / Stop Fence 持久化完全不存在**：无 `acquire_lease` / `release_or_expire_lease`，无持久 Action Lease、Resource Lock 与 Stop Fence；`approved → leased → in_flight → completed` 合法链当前走不通。这是 child materializer 的硬前置。
+- **Lease / Stop Fence 持久化未实现**：无 `acquire_lease` / `begin_dispatch` / `release_or_expire_lease` / `activate_stop_fence`，无持久 Action Lease、Resource Lock 与 Stop Fence；`approved → leased → in_flight → completed` 合法链当前走不通。这是 child materializer 的硬前置。语义已由 ADR-0011 拍板（Lease 跨 `leased|in_flight`、`max_uses=1`、Approval invalidation 的 Action 侧分流、Stop v1 原子范围与动态 allocation、双源一致、触发器协议），实施依据为蓝图 v2。
 - **切片 4c 安全闭环接近完成，仍未最终验收**：原 11 项 High 已闭合 9 项。除既有 operation Approval 当前 PD 绑定、Challenge 过期 CAS/审计和 identity 审计外，本轮又闭合 5 项：每个顶层 Approval/Policy 复合命令用唯一 transaction-bound typed collector，在任何业务写入前覆盖 command allocations 与该路径实际读取、验证或消费的 persisted Task/Scope/Action/PD/PolicyRule/request/challenge/evidence/credential UUID 用途，嵌套 prepare/apply 禁止另建 collector；事件 payload 从权威原始 request 回读真实 confirmation mode；denied resolution 审计为 `outcome=blocked`、稳定 reason code 且保留 operation PD/policy context；local/system 证据校验 actor/entry/time/challenge/request/chain/task/subject/material 绑定；system/remote Challenge 消费与 Approval resolution/head/Event/Audit 通过 `consume_challenge_with_binding` 同一事务提交，过期返回 typed `ChallengeExpired` 而不写 resolution。
 - **仍未闭合的 4c High（2 项）**：单独调用 `resolve` / `invalidate_and_optionally_replace` 仍未完整更新 Action 关联并撤销受影响 Lease（撤销 Lease 必须等 Lease 持久化；`resolve_approval_and_commit_action` 已能基于重新派生 proof 同事务驱动 `pending→approved`）；`remote_signature` 尚无真实密码学验签。
 - **`remote_signature` 如实失败关闭**：远程 Challenge 的过期/消费与 resolution 已有原子事务闭包，但无密码学验签时，远程决议一律不得作为批准 Action 的授权（`ApprovalRequired`）；待可信 `RemoteSignatureVerifier`（首个实现为 Ed25519 RFC8032）落地后再开放。
@@ -91,7 +91,7 @@
 - [x] 切片 4b：PolicyRule + PermissionDecision repositories + Action 评估编排
 - [~] 切片 4c：Approval/Identity repository（原 11 项 High 已闭合 9 项；剩 Lease 关联撤销与真实远程验签 2 项，不得称完成）
 - [x] 收尾：Approval 当前绑定 PD 门 / Action 唯一状态事件权威 / post-Outbox 全量回滚证明
-- [ ] Lease + Stop Fence 持久化（child materializer 硬前置）
+- [ ] Lease + Stop Fence 持久化（child materializer 硬前置；ADR-0011 designed，蓝图 v2 单元 1-4）
 - [ ] 切片 5：child materializer
 - [ ] 切片 6：§13.7 谓词闭合（child/Action/PD/Approval + 其余 producers）
 - [ ] active Event business producer：child（root已在切片2接入，action已在4a接入，approval已在4c接入）
@@ -115,9 +115,9 @@
 
 ## 下一步
 
-1. 按 [`docs/design/lease-stop-fence-blueprint.md`](design/lease-stop-fence-blueprint.md) 实现 Lease、Resource Lock 与 Stop Fence 持久化，打通 `approved → leased → in_flight → completed`，并让 Approval invalidation/replacement 同事务撤销受影响 Lease。
-2. 引入可信 `RemoteSignatureVerifier` 边界（首个实现为 Ed25519 RFC8032 pure mode），解除 `remote_signature` 的失败关闭并完成 4c 最终验收。
-3. 切片5：实现child materializer并接入child `task.created` producer。
+1. 按 ADR-0011 与 [`docs/design/lease-stop-fence-blueprint.md`](design/lease-stop-fence-blueprint.md) v2 实施 Lease/Stop Fence：migration 0010 三表 + guards → `acquire_lease` → `begin_dispatch`/`release_or_expire_lease`（含 `domain-task` in_flight 退出边补齐 `LeaseReleaseEffect`）→ Stop owner → Approval invalidation 同事务撤销受影响 Lease（4c 清零）。
+2. 引入可信 `RemoteSignatureVerifier` 边界（首个实现为 Ed25519 RFC8032 pure mode，纯 crypto 放 `kernel-authorization`，ADR-0011 §10），解除 `remote_signature` 的失败关闭并完成 4c 最终验收。
+3. 切片5：实现child materializer并接入child `task.created` producer（mapping 表用 migration 0011；child creation Audit 的 actor/entry_point 取 typed execution context，ADR-0011 §9）。
 4. 切片6：在切片5完成后闭合§13.7全部谓词。
 5. **之后**再做 Publisher 与 versioned KCP poll；再实现剩余五个 Catalog handler 与可连接 server。
 6. 随后实现 Extension SDK Base 与 TypeScript/client。

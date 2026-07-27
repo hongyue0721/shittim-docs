@@ -7,6 +7,7 @@
 - **主仓库**：<https://github.com/hongyue0721/shittim>（`master`）
 - **文档镜像仓库**：<https://github.com/hongyue0721/shittim-docs>
 - **本轮代码验收基线**：`de5a8da`（Approval 顶层命令 UUID 用途权威闭合）；继续开发时以已推送的 `origin/master` 为准，并要求工作树干净。
+- **下一实现任务**：Lease/Stop Fence 持久化（ADR-0011 designed，蓝图 v2），随后 4c 清零、切片 5（migration 0011）与 §13.7。
 - **同步状态**：主仓 push 与文档镜像 receipt 由 `scripts/sync-docs-repository.mjs` 校验；不得在文档中维护会随一次 push 立即失真的“领先提交数”。
 - **里程碑 `V2InitialBuildActive`（ADR-0009）** 已完成或部分完成切片：
   0 规范手术；1a root v2 持久对象 Schema×4；1b Action/child Schema×5 + `kernel-authorization` 纯库；1c-i 授权核心五 Schema；1c-ii 身份/挑战/证据八 Schema；2 root TaskCreate v2 仓库/migration 0004；3a production MethodVersionBindings 八方法集；3b KCP 切 active v2 删 v1 路径；3c sqlite v1 写路径删除/v2-only Outbox/旧库 reinitialize-required 拒绝；4a Action 仓库+`action.state_changed`/migration 0006；4b PolicyRule+PermissionDecision 仓库+评估编排/migration 0007；4c Approval/Identity 结构与 9/11 High 已闭合（migration 0008），仍属部分完成。
@@ -55,16 +56,32 @@
 6. **推送**：验证远端 SHA 与本地已验收 SHA 一致。
 7. **同步文档镜像**：`pnpm run sync:docs-repository` 并带 `--check` 验证镜像文件集合、内容与 `FILE_MANIFEST.md` 与主仓完全一致。
 
-## 4. 下一步任务一：切片 5 child materializer
+## 4. 下一步任务一：Lease/Stop Fence 持久化（ADR-0011）
+
+这是切片 5 的硬前置，也是当前第一个实现任务。语义已由 [`adr/0011-lease生命周期与stop-fence原子语义.md`](../adr/0011-lease生命周期与stop-fence原子语义.md) 拍板，实施依据为 [`docs/design/lease-stop-fence-blueprint.md`](design/lease-stop-fence-blueprint.md) v2，禁止参照任何旧版蓝图或记忆直接写 migration 0010。
+
+### 4.1 实施单元与提交顺序
+
+1. **单元 1**：migration 0010 三表（`action_leases` / `action_resource_locks` / `stop_fence`）+ CAS guards + 既有库 lease 非空即 `reinitialize-required` 的关系校验。
+2. **单元 2**：`acquire_lease`（`approved → leased`）+ `get_action_lease` 严格只读；按 ADR-0011 §7 触发器协议，双源一致（§8）。
+3. **单元 3**：`begin_dispatch` / `release_or_expire_lease`；`domain-task` 为 `in_flight` 三条退出边补齐 `LeaseReleaseEffect`；`reject_unhandled_action_effects` 收敛为 Lease owner 可消费 typed effect。
+4. **单元 4**：`activate_stop_fence` / `get_stop_fence`；v1 原子范围（ADR-0011 §4）+ transaction-bound allocation source（§5）+ canonical Actor 快照（§6）。
+5. **单元 5**：4c 清零——Approval invalidation/replacement 同事务按 ADR-0011 §3 分流 Action（approved 重门控 / leased→cancelled / in_flight 不打断）。
+
+并行线：Ed25519 `RemoteSignatureVerifier`（ADR-0011 §10），在 4c 最终验收前合流。
+
+每单元独立验收 `0 Critical / 0 High / 0 Medium` 后才提交；`max_uses` 的 Schema 收紧（`const 1`）随单元 1 同批过生成链门禁。
+
+## 5. 下一步任务二：切片 5 child materializer
 
 这是当前最高优先级任务，目标与约束如下：
 
-### 4.1 目标
+### 5.1 目标
 
 - **子 Task 唯一创建路径**：由 parent 发起 `kernel.task/task.child.create` Action（S1 kernel.task），经 Policy 评估后，由 Kernel 原子物化。
 - root 直接创建只能建 root；v2 已强制 root-only，child 不再通过 KCP/TaskCreate 直接写入。
 
-### 4.2 已有资产
+### 5.2 已有资产
 
 - Schema 与生成类型：`ChildTaskProposalV1`、`NormalizedChildTaskProposalV1`、`ChildTaskMaterializationAllocationV1`（`schemas/`、`kernel-contracts` 生成类型）。
 - `kernel-task-creation` 纯库：child 规范化、hash、10 UUID allocation 校验与官方 fixtures：
@@ -73,9 +90,9 @@
 - `kernel-authorization` 投影：`project_child_task_delta`（`rust/crates/kernel-authorization/src/child_delta.rs`）、`project_material_authorization`（`material.rs`）、`project_observation_evidence`（`observation.rs`）。
 - 已闭合的持久化基础设施：Action 仓库（4a/migration 0006）、PolicyRule+PermissionDecision 仓库+评估编排（4b/migration 0007）、Approval 三 CAS 方法+Identity 仓库（4c/migration 0008）。
 
-### 4.3 待实现
+### 5.3 待实现
 
-1. `kernel-sqlite` 新增 child materialization 方法；如需要新表，按 migration 0004-0008 的 descriptor 模式写 `migrations/0009_child_materialization.sql`。
+1. `kernel-sqlite` 新增 child materialization 方法；如需要新表，按 migration 0004-0009 的 descriptor 模式写 `migrations/0011_child_materialization.sql`（0009 已是 Action-PD heads，0010 分配给 Lease/Stop Fence，ADR-0011）。
 2. **原子性**：同一 `BEGIN IMMEDIATE` 事务内完成：
    - 创建 Action 标记为完成；
    - 写入子 `Task`、`TaskScope`、`ContentOrigin`、`Provenance`；
@@ -91,7 +108,7 @@
 
 6. 禁止引入新的 v1 路径或允许直接写 child 的 API；任何新增 public 方法必须有对应的 contract 测试。
 
-### 4.4 合同锚点
+### 5.4 合同锚点
 
 - `specs/IMPLEMENTATION_CONTRACTS.md`：§5.3（child proposal 与 TaskCreate 字段同构）、§13.6（切片 1b/2/4a-4c 的约束与仓库边界）、§13.7（`V2InitialBuildActive` 谓词清单）。
 - `specs/CORE_ARCHITECTURE.md` §9.2（child task 父子关系与权威入口）。
@@ -99,14 +116,14 @@
 - `adr/0006-child-task权威与taskcreate-v2迁移.md`（`task.child.create` 是 Kernel-local Action operation、atomic materialization、allocation 结构）。
 - `adr/0009-v2从零构建并取消v1数据迁移.md`（v2-only 基线，取消 v1 迁移）。
 
-### 4.5 验收门槛
+### 5.5 验收门槛
 
 - 新增测试全绿；`kernel-task-creation` 的 allocation/validator 测试覆盖边界；`kernel-sqlite` 新增 integration 测试覆盖原子事务与 readback。
 - `./scripts/check-schema.sh` 全量门绿。
 - 独立验收 `0 Critical/High/Medium` 后才提交。
 - 提交前：`git add -A && ./scripts/check-schema.sh`，确保 generated tree 与 `FILE_MANIFEST.md` 都已 stage 并通过漂移检查。
 
-## 5. 下一步任务二：切片 6 最终清理 + §13.7 闭合
+## 6. 下一步任务三：切片 6 最终清理 + §13.7 闭合
 
 1. 逐条核对 `specs/IMPLEMENTATION_CONTRACTS.md` §13.7 的谓词；未闭合的项必须显式记录，不得隐藏。
 2. 只有在 §13.7 全部闭合后，才解锁以下五方法 handler：
@@ -117,18 +134,18 @@
    - `stop.status`
 3. 这些 handler 各自有前置合同，§13.7 纪律要求：谓词未闭合不得启动 server。
 
-## 6. 再后续路线图
+## 7. 再后续路线图
 
 仅概述，五方法 handler 后才能进入：
 
 - `task.list`：游标/排序合同。
 - `event.subscribe` / `event.poll`：订阅关系与 Outbox 游标合同。
-- `stop.activate` / `stop.status`：stop fence 持久化合同；**特别注意**：`stop.activate` 的副作用与重启和解合同尚未闭合，属合同先行任务。
+- `stop.activate` / `stop.status`：stop fence 持久化合同已由 ADR-0011 闭合（v1 原子范围、动态 allocation、canonical Actor 快照）；实现按蓝图 v2 单元 4。
 - Publisher loop。
 - 多语言 SDK。
 - 桌面端。
 
-## 7. 验收债务（必须先补）
+## 8. 验收债务（必须先补）
 
 切片 4b 与 4c 因子代理通道故障由主会话亲自实现并自验提交。当前状态：
 
@@ -138,11 +155,11 @@
 
 **路线依赖警告**：4c 中「resolve/invalidate 必须撤销 Action Lease」在 Lease 持久化不存在时无法真正关闭。因此顺序为：4c 非 Lease 修复 → Lease/Stop Fence → 4c Lease 关联复核 → child materializer → §13.7/handlers。不得在未清零 4c 的基础上叠加物化逻辑。
 
-## 8. 已知问题
+## 9. 已知问题
 
 - `schema-tool` 测试 `artifact_transaction lock_conformance real_cross_process_holder_crash_releases_fd_lock` 在并行高负载下偶发时序 flake，单跑必过。与业务逻辑无关，待修复。
 
-## 9. 子代理使用政策
+## 10. 子代理使用政策
 
 - `inherit_context` 必须为 `false`。
 - prompt 必须自包含：工作区、目标、范围、约束、步骤、验收标准、输出格式。
