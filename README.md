@@ -6,7 +6,7 @@
 
 1. `AGENT.md` 是宪法：全局不变量、可信核心边界、依赖方向与编码规则。
 2. `specs/*.md` 是各领域的唯一规范事实源；同一字段、枚举、状态机不得在其他文档复制定义。
-3. [`adr/`](adr/README.md) 记录未被规范覆盖的局部实施决策；ADR 状态为 proposed/accepted/superseded，accepted 不等于代码已经完成。ADR-0006 的首批12项 Schema、Task creation纯library与official fixtures/harness已经实现，但repository、handler、child materializer尚未完成；ADR-0007仍为contract-only；ADR-0008的Event v2八Schema/catalog/typed envelope以及SQLite migration 0003/descriptor v1/统一Outbox shape已经实现，active business producer、Publisher、versioned KCP poll与runtime仍未实现；ADR-0009将里程碑定为`V2InitialBuildActive`，其切片1a的ContentOriginV2、AuditRecordV2、TaskCreationProvenanceV1、AuditAllocationV2 Schema/manifest/generated/conformance已经实现，repository/producer仍未实现。
+3. [`adr/`](adr/README.md)记录未被规范覆盖的局部实施决策；accepted不等于代码全部完成。ADR-0009将里程碑定为`V2InitialBuildActive`并采用fresh baseline；切片0–4c已落地，child materializer仍未完成。ADR-0010将Policy matcher固定为直接消费active v2合同，并直接退役三项未投产旧Policy合同；当前Schema基线为`80 = 38 retained + 42 component-native`。
 4. 源码、Schema 与测试必须实现本规范，不能反向改变规范。
 
 `PROJECT_OVERVIEW.md` 是非规范产品概览，`FILE_MANIFEST.md` 是非规范元数据（由 `scripts/update-file-manifest.mjs` 从 Git Markdown source set 生成，禁止手改）；二者不定义行为。冲突时，以 AGENT 的硬不变量、再以对应领域 spec 为准。
@@ -28,7 +28,7 @@
 - [`docs/PROGRESS.md`](docs/PROGRESS.md)：中文实现进度与当前阻塞。
 - [`docs/REPOSITORY_MAINTENANCE.md`](docs/REPOSITORY_MAINTENANCE.md)：主仓与纯文档镜像的持续更新、发布顺序、失败门禁，以及已实现的 `scripts/sync-docs-repository.mjs`（`pnpm run check:docs-repository` / `sync:docs-repository` / `test:docs-repository`）。
 - [`docs/IMPLEMENTATION_MATRIX.md`](docs/IMPLEMENTATION_MATRIX.md)：规范、Schema、实现和测试状态矩阵。
-- [`docs/api/README.md`](docs/api/README.md)：KCP、事件与错误文档入口；当前Rust已实现ADR-0006首批Schema/pure library/fixtures、ADR-0008 Event v2 Schema/catalog/typed decode与版本化 Outbox（切片3c 起 v2-only）、ADR-0009切片1a–3c（含 root TaskCreate v2 repository、method-aware kcp create v2、v1 write 删除与旧库 reinitialize-required）；child Action materializer、Action/PD/Approval repositories、其余 active Event producers、Publisher、`agentd`与可连接server尚未实现。
+- [`docs/api/README.md`](docs/api/README.md)：KCP、事件与错误文档入口；当前Rust已实现root TaskCreate、Action/PolicyRule/PermissionDecision/Approval/Identity repositories及root/action/approval producers，Policy matcher直接消费v2。child materializer、child producer、Publisher、`agentd`与可连接server尚未实现。
 - [`docs/sdk/extension-sdk.md`](docs/sdk/extension-sdk.md)：Extension SDK Base 文档入口；Base 是基础产品必做，当前无可发布 SDK。
 - [`adr/README.md`](adr/README.md)：已接受架构决策索引。
 

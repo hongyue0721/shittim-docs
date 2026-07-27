@@ -1,6 +1,6 @@
 # kernel-sqlite 内部 Rust API
 
-`rust/crates/kernel-sqlite`是文件型SQLite持久化crate，不是KCP或外部SDK API。当前实现 migration 0001–0008、AuditRecord **v2**、版本化 **v2-only** Event Outbox、transaction-bound rate limit、strict Task/TaskScope/ContentOrigin(v2) 读路径、**active root TaskCreate v2** repository、切片4a **Action current-snapshot / ActionTransitionIntent / `action.state_changed` producer**、切片4b **PolicyRuleV2 / PermissionDecisionV2 repositories + `evaluate_action_permission` 评估编排**，以及切片4c **Approval current-head CAS 三方法 + `approval.state_changed` producer + Identity credential/challenge/evidence repositories**。Legacy TaskCreate v1 write、AuditRecord v1 write、`append_legacy_event_v1` / `PendingLegacyEventV1` / `StoredEventEnvelope::LegacyV1` 已按 ADR-0009（切片3c）删除。child materializer仍不存在；不包含KCP handler、Publisher或versioned KCP poll；真实远程验签属 Provider 边界未实现。
+`rust/crates/kernel-sqlite`是文件型SQLite持久化crate，不是KCP或外部SDK API。当前实现 migration 0001–0009、AuditRecord **v2**、版本化 **v2-only** Event Outbox、transaction-bound rate limit、strict Task/TaskScope/ContentOrigin(v2) 读路径、**active root TaskCreate v2** repository、切片4a **Action current-snapshot / ActionTransitionIntent / `action.state_changed` producer**、切片4b **PolicyRuleV2 / PermissionDecisionV2 repositories + `evaluate_action_permission` 评估编排**，以及切片4c **Approval 三种 current-head mutation 的命名 owner + `approval.state_changed` producer + Identity credential/challenge/evidence repositories**。Legacy TaskCreate v1 write、AuditRecord v1 write、`append_legacy_event_v1` / `PendingLegacyEventV1` / `StoredEventEnvelope::LegacyV1` 已按 ADR-0009（切片3c）删除。child materializer仍不存在；不包含KCP handler、Publisher或versioned KCP poll；真实远程验签属 Provider 边界未实现。
 
 ## 打开与migration
 
@@ -29,8 +29,7 @@ let store = SqliteStore::open("/var/lib/shittim/kernel.sqlite3", config)?;
 
 ```rust
 store.with_write_transaction(|transaction| {
-    let event = transaction.append_active_event_v2(pending)?;
-    Ok(event)
+    transaction.create_root_task_v2(command)
 })?;
 ```
 
@@ -41,9 +40,9 @@ store.with_write_transaction(|transaction| {
 - rollback/release cleanup失败会poison outer transaction。即使caller吞掉局部错误并返回`Ok`，outer transaction仍不能commit。
 - `WriteTransaction`不暴露任意SQL、commit或crate-private bypass constructor。
 
-## Versioned unified Outbox public API（v2-only）
+## Versioned unified Outbox read API + producer-internal append（v2-only）
 
-类型由`kernel-sqlite/src/outbox.rs`拥有，并从crate root re-export：
+公开读取类型由`kernel-sqlite/src/outbox.rs`拥有并从crate root re-export：
 
 ```rust
 pub enum StoredEventEnvelope {
@@ -56,16 +55,11 @@ pub struct OutboxRecord {
 }
 
 pub enum EventAggregateId { Task(Uuid), Action(Uuid), ApprovalChain(Uuid), StopFenceGlobal }
-pub struct PendingActiveEventV2 { /* exact ADR-0008 fields */ }
 ```
 
-公开写方法只有：
+Outbox append 不是公开业务入口：待写事件类型与 transaction-bound append 方法均为 crate-private，只能由 root、Action、Approval 等拥有业务状态变化的 producer 使用。crate 外调用方不能构造待写事件或绕过 owner producer 直接追加 Event。
 
-```rust
-WriteTransaction::append_active_event_v2(PendingActiveEventV2)
-```
-
-`PendingLegacyEventV1` / `append_legacy_event_v1` / `StoredEventEnvelope::LegacyV1` 已删除且无 alias。append 内核：
+`PendingLegacyEventV1` / `append_legacy_event_v1` / `StoredEventEnvelope::LegacyV1` 已删除且无 alias。producer 内部 append 内核：
 
 1. 分配前exact prevalidation；
 2. savepoint内对`(aggregate_type, aggregate_id)`分配连续sequence；
@@ -135,24 +129,24 @@ pub enum CreateRootTaskV2Result {
 // Action closed subset implemented in this slice (public):
 WriteTransaction::insert_pending_action(InsertPendingActionCommand) -> ActionRequestV2
 SqliteStore::get_action(id) -> Option<ActionRequestV2>
-// crate-private internal CAS helper only (no Outbox; not a dual status-event authority):
-// WriteTransaction::transition_with_expected_revision(TransitionActionCommand) -> ActionRequestV2
-
-// ActionTransitionIntent closed set (IC §6.14) — sole public authority for status events:
+// ActionTransitionIntent durable/recovery surface:
 WriteTransaction::insert_intent(ActionTransitionIntentV1) -> InsertIntentResult
 SqliteStore::get_intent(transition_id) -> Option<ActionTransitionIntentV1>
 SqliteStore::get_for_action_revision(...) -> Option<ActionTransitionIntentV1>
-WriteTransaction::mark_committed_with_event(MarkCommittedCommand) -> (ActionRequestV2, OutboxRecord)
 SqliteStore::reconcile_intent(transition_id) -> ReconcileIntentResult // prepared|committed|corrupt
+
+// Production status edges are owned by named business orchestrators. The mechanical
+// mark_committed_inside/mark_*_committed_with_event bridge is crate-internal; the raw
+// mark_committed_with_event wrapper exists only under cfg(test).
 ```
 
 - pending insert：`status=pending`、`revision=1`、`permission_decision_ref`/`approval_chain_id`/`result`/`lease` 为 null；owning Task 必须存在；canonical JCS readback。
-- `transition_with_expected_revision`：**crate-private** 内部 CAS helper；expected revision+status CAS；边合法性与 evidence 不变量委托 `domain-task`；**不写 Outbox**。会发状态事件的边必须以 `mark_committed_with_event` 为唯一权威，禁止双写路径。
+- Action 状态变更没有通用 repository 写入口；命名 owner 先验证自身权威证据，再通过 crate-internal `mark_binding_policy_committed_with_event` 或 `mark_approval_committed_with_event` 进入 `mark_committed_inside`。机械层只投影已经验证的 typed fact，不接受 crate 外 caller 自选 PD/Approval 引用；裸 `mark_committed_with_event` 仅供 `cfg(test)` 的机械闭包测试。
 - **需 effects 的边当前 fail closed**：domain outcome 要求 lease/lock release（如 `leased → approved|cancelled|unknown_side_effect`）时，在 lease API 落地前明确拒绝，禁止静默半提交。
 - `insert_intent`：`transition_id` 与业务六元组双唯一键；同事实重放返回原 intent；非法边 fail closed。
-- `mark_committed_with_event`：同一 savepoint 内先经 `domain-task::apply_action_transition` 做完整 evidence 门（PD/verification/dispatch_certainty 等；intent 只作 anchor+唯一键），再 CAS Action + `append_active_event_v2(action.state_changed)`（payload 从 commit 后 Action+intent+`ActionEventIntent` 投影；causation 精确 `action_transition`）+ 回写 `committed_event_id`；失败不占 sequence/position。同 event id 重放幂等，只验 intent↔event 链路，不要求 Action head 仍停在该 revision。
+- 机械 commit 在同一 savepoint 内经 `domain-task::apply_action_transition` 做完整领域 evidence 门，再 CAS Action + `append_active_event_v2(action.state_changed)` + 回写 `committed_event_id`；失败不占 sequence/position。同 event id 重放幂等，只验 intent↔event 链路，不要求 Action head 仍停在该 revision。
 - `reconcile_intent`：只观察 stored 关系，返回 `prepared|committed|corrupt`，不补造 event 或更换 transition id。Committed 只对比 intent↔outbox event 快照字段；后续合法推进不得映射 Corrupt。
-- 本片**未实现** IC §6.10.6 Action 闭集中的 lease/policy-binding/child-completion/recovery-list 方法。
+- 已实现 Policy binding owner（`evaluate_action_permission`）与 Approval resolution owner（`resolve_approval_and_commit_action`，同一 savepoint 内解析 current resolution、重新派生 usable proof 并驱动 `pending→approved`）。lease acquire/dispatch/release、child materializer、recovery orchestrator 仍**未实现**。
 
 ## PolicyRuleV2 + PermissionDecisionV2 + 评估编排（切片4b）
 
@@ -165,7 +159,8 @@ SqliteStore::list_current_policy_rules() -> Vec<PolicyRuleV2>
 SqliteStore::get_policy_set_revision() -> i64 // bootstrap 0 = empty set
 
 // PermissionDecision closed set (IC §6.10.6 subset; no update/delete)
-WriteTransaction::append_permission_decision(PermissionDecisionV2) -> PermissionDecisionV2
+// pub(crate): sole legitimate write path is evaluate_action_permission (bidirectional Action↔PD binding)
+WriteTransaction::append_permission_decision(PermissionDecisionV2) -> PermissionDecisionV2  // pub(crate)
 // decision_revision: 0 placeholder or exact next; repository allocates max(action)+1
 SqliteStore::get_permission_decision(id) -> Option<PermissionDecisionV2>
 SqliteStore::get_current_permission_decision_for_action(action_id) -> Option<PermissionDecisionV2>
@@ -176,13 +171,35 @@ SqliteStore::validate_current_permission_decision_for_action(action_id)
 // Evaluation orchestration (single savepoint; no Approval creation)
 WriteTransaction::evaluate_action_permission(EvaluateActionPermissionCommand)
     -> EvaluateActionPermissionResult // PD + Action CAS + permission.evaluated Audit
+
+// Approval creation orchestration: evaluation + initial operation Approval in ONE savepoint.
+// Caller supplies only non-derived request facts; the repository derives confirmation mode and
+// the complete operation subject from Task/Action/newly-current PD. Chain collision is rejected
+// before rules, matching, rate-limit consumption, or PD insertion.
+WriteTransaction::evaluate_action_permission_and_create_approval(
+    EvaluateActionPermissionCommand,
+    approval_chain_id,
+    CreateOperationApprovalRequestCommand,
+    ApprovalEventAllocationV1,
+    audit_record_id,
+) -> (EvaluateActionPermissionResult, ApprovalMutationResult)
+
+// Approval resolution orchestration: resolve the chain AND commit pending -> approved in ONE
+// savepoint. The Action edge is driven only by a proof re-derived from the committed resolution
+// (current chain head + approved + Action/PD/chain agreement); the caller supplies no Approval refs.
+WriteTransaction::resolve_approval_and_commit_action(ResolveApprovalAndCommitActionCommand)
+    -> (ApprovalMutationResult, ActionRequestV2, OutboxRecord)
 ```
 
 - **PolicySet**：空初始 revision=0 是权威空状态；每次成功 rule mutation 同事务 +1。
 - **PolicyRule**：append-only revision 历史；current head = MAX(revision) per id；disable 写新 revision `enabled=false`；物理 delete 禁止。
 - **PermissionDecision**：immutable append；`decision_revision` 连续；canonical JCS readback；断号/id 冲突 fail closed。
-- **评估编排不变量**：pending Action + expected revision CAS；可选 TaskScope containment；enabled v2 heads → domain-policy matcher（`remote_signature` 规则不进 v1 matcher，fail closed 不生效直到 matcher 升级 v2）；`TransactionRateLimitPort` winner-only 消费；`kernel-authorization` 真实重算 material/observation 指纹（禁用 evaluation_context_hash；material preimage 的 policy_set_revision 与 PD 存储值一致，空 set 为 0，共享 `material_policy_set_revision_for_projection`）；append PD + Audit `permission.evaluated`（policy_context 与 PD 字段一致）；allow/deny 状态边经 intent + `mark_committed_with_event` 发 `action.state_changed`（唯一权威，reason_code=policy_allow|policy_deny），confirm 为 metadata CAS 不发事件；confirm deferral 绑定真实 PD，无 approval 伪造（`approval_chain_id` null，Approval 属 4c）；失败整体回滚。
-- 本片**未实现** Approval/Identity repositories、Approval 创建、Action lease/policy-binding 闭集其余方法。
+- **评估编排不变量**：pending Action + expected revision CAS；TaskScope containment始终强制（合同不变量，非caller策略）；每个顶层 `evaluate_action_permission` / `evaluate_action_permission_and_create_approval` 命令只创建一个 transaction-bound typed UUID collector，先登记 PD/audit/transition/event 等 command allocations，再在 matcher/rate-limit 或任何持久化写入前登记该路径实际读取的 persisted Action/Task/TaskScope/current PD/PolicyRule；复合 Approval 创建继续用同一 collector 登记 chain/request/Approval event/audit，嵌套阶段不得另建集合。新 PD allocation 与命令前 current PD reference 是不同生命周期用途，互相复用必须 `ContractInvalid`。enabled `PolicyRuleV2` heads直接进入domain-policy matcher，无v2→v1转换、Generic probe、remote rule-ID side table或mode/decision adapter；五种`ConfirmationModeV1`都生成对应`PermissionDecisionV2Decision`，`remote_signature`正常参与specificity/priority/winner-only rate-limit/fallback；`kernel-authorization`真实重算material/observation指纹；append PD + Audit `permission.evaluated`；allow/deny状态边经 intent + crate-internal Policy owner bridge 发`action.state_changed`，confirmation为metadata CAS不发Action状态事件；失败整体回滚（含rate-limit、PD、Audit、Outbox sequence）。
+- **Approval 授权不变量**：operation Approval subject 由仓储基于真实 Task/Action/当前 PD 投影派生，caller 无法注入派生字段；Action 已拥有链时普通重评失败关闭且零写入；`pending→approved` 要求当前 PD 为 Allow，否则必须提供由仓储从持久事实派生的 typed Approval proof（记录为当前链头、decision=approved、Action 绑定同链与同 PD、PD 为 RequireConfirmation 且 requirement 指向同链）；caller 提供的 `approval_resolution_ref` 一律拒绝。
+- **`remote_signature` 如实失败关闭**：尚无密码学验签，因此远程决议不得作为批准 Action 的授权（`ApprovalRequired`），待可信验签边界落地后开放。
+- **Approval 解析证据、UUID 与审计**：`approval.state_changed.confirmation_mode` 从链的权威原始 request 回读，缺失/损坏返回 `stored_data_invalid`；denied resolution Audit 固定 `outcome=blocked`、reason `approval_resolved_denied` 并保留 operation PD/policy context。每个顶层 `resolve` / `resolve_approval_and_commit_action` / `invalidate_and_optionally_replace` 使用唯一 transaction-bound typed collector，外层 Action transition/event allocation 与内层 request/head/Challenge/Task/PD/evidence/credential persisted facts 必须在任何 consume/append/CAS 前进入同一用途闭集；相同 UUID 只允许同一语义事实 mirror，跨用途碰撞返回 `ContractInvalid` 且零写入。
+- **Identity / Challenge 原子闭包**：Challenge 消费强制 `now >= expires_at` 过期 CAS；公开的可独立提交 `consume_challenge` 已删除，system/remote resolution 通过 crate 内 `consume_challenge_with_binding` 把 consume 与 Approval record/head/Event/Audit 放在同一 savepoint；过期返回 typed `ChallengeExpired`，只提交 Challenge 终态与 identity Audit。local/system 证据校验 resolver actor/entry、时间窗、challenge/request/chain/task/subject/material 绑定；credential 生命周期与 local/system 证据插入均写 identity Audit。
+- 本阶段仍未实现：child materializer、Action lease acquire/dispatch/release 与 recovery 闭集、Provider 真实远程验签；Policy binding 已实现。单独调用 `resolve` / `invalidate_and_optionally_replace` 尚不更新 Action 关联、不撤销 Lease（Action 批准路径请用 `resolve_approval_and_commit_action`）。
 
 ## Transaction-bound rate limit
 
@@ -194,4 +211,4 @@ WriteTransaction::evaluate_action_permission(EvaluateActionPermissionCommand)
 
 ## 明确未实现
 
-root TaskCreate v2 repository + kcp method-aware runtime（切片3a/3b）+ v1 write 删除与旧库拒绝（切片3c）+ Action/transition/`action.state_changed`（切片4a）+ PolicyRule/PD/评估编排（切片4b）已落地。Child Action materialization、Approval/Identity repositories、Action lease/policy-binding/child-completion 写方法、approval/child active Event business producer、Publisher、versioned KCP poll、server/agentd、retention/claim lease仍未实现。Publisher/poll不在`V2InitialBuildActive`。§13.7 完整闭合仍需切片4c–5（Approval/Identity + child materializer）。
+root TaskCreate v2 repository + kcp method-aware runtime（3a/3b）+ v1 write删除与旧库拒绝（3c）+ Action/transition/`action.state_changed`（4a）+ PolicyRule/PD binding/评估编排（4b）+ Approval/Identity/`approval.state_changed`（4c）已落地。Child Action materialization、Action lease acquire/dispatch/release、child-completion与recovery写方法、child active Event producer、Provider真实远程验签、Publisher、versioned KCP poll、server/agentd、retention/claim lease仍未实现。Publisher/poll不在`V2InitialBuildActive`；§13.7完整闭合仍需 Lease/Stop Fence、真实远程验签与切片5 child materializer。

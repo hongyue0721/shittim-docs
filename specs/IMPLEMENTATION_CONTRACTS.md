@@ -780,8 +780,8 @@ Approval不可变链的每次current-head变化都必须可观察，正式Catalo
 
 `request_ref`始终指该链中为本次subject/mode建立基线的request：initial时是新request；resolution时是直接前驱request；invalidation/replacement时是被失效request本身，或被失效resolution的`request_ref`。Schema能表达上述null/non-null、from/to kind与resolution旧head分支，但Draft 2020-12不能表达两个任意实例字符串相等，因此repository必须执行exact equality：initial `to_head_ref=request_ref`；resolution `from_head_ref=request_ref`且`to_head_ref=resolution_ref`；无replacement invalidation `to_head_ref=invalidation_ref`；replacement `to_head_ref=replacement_request_ref`；所有invalidation/replacement的`invalidation_ref`等于新invalidation record ID，若旧head是resolution则`resolution_ref=from_head_ref`，若旧head是request则`request_ref=from_head_ref`且`resolution_ref=null`；replacement request record的`predecessor_ref=invalidation_ref`。repository还必须验证整链canonical subject一致、mode从对应request投影、operation subject的PD/Action绑定及old/new current-head真实关系；初始request的`permission_decision_ref/action_id`按subject真实绑定，可为null但不能猜默认；
 - 固定转换：初始request `null→request`；resolve `request→resolution`；invalidate without replacement `request|resolution→invalidation`；invalidate with replacement在同一事务形成一个逻辑head转换`request|resolution→request`，payload同时携带invalidation与replacement request，不得发出可被消费者误认作稳定head的中间invalidation事件；
-- producer固定为Approval repository的`append_request`（仅新链）、`resolve`、`invalidate_and_optionally_replace`。每次成功调用恰好写一条事件；CAS loser、Schema/evidence失败和replay不写事件；
-- causation必须来自业务调用的真实来源：KCP/内部command用`command_request`，已有Event驱动用`event`，Action直接触发Approval变化用`action`；Approval event不得以自己或同chain作因果。所有三种写方法必须接收上层分配的event id、correlation、dedup、causation和`changed_at`，并与Approval/Audit/Action/PD更新同事务；
+- producer固定为命名业务owner：operation初始request只能由`evaluate_action_permission_and_create_approval`在Policy evaluation/PD current binding/Action chain binding同一savepoint内创建；resolution由`resolve`，需要同时批准Action时由`resolve_approval_and_commit_action`；invalidation/replacement由`invalidate_and_optionally_replace`。不存在可独立提交的generic `append_request` production入口。每次成功head mutation恰好写一条事件；CAS loser、Schema/evidence失败和replay不写事件；
+- causation必须来自业务调用的真实来源：KCP/内部command用`command_request`，已有Event驱动用`event`，Action直接触发Approval变化用`action`；Approval event不得以自己或同chain作因果。所有命名owner必须接收上层分配的event id、correlation、dedup、causation和`changed_at`，并与Approval/Audit/Action/PD更新同事务；
 - payload的head、record kind、subject、mode、PD/Action与reason必须从同事务canonical records/current relation投影，consumer readback失配为`stored_data_invalid`。
 
 #### `stop_fence.activated`
@@ -1241,7 +1241,7 @@ created_at / updated_at
 
 ### 6.6 PermissionDecision v2
 
-PermissionDecision v1仅保留Schema/fixture历史验证资产，无production read/write/migration。active evaluation写v2不可变记录：
+PermissionDecision v2是active evaluation唯一合同。未投产旧PermissionDecision合同已按ADR-0010从source/manifest/generated/validation入口直接退役，无production read/write/migration或compat adapter：
 
 ```text
 id
@@ -1287,7 +1287,7 @@ lease_ref?
 
 ### 6.7 PolicyRule v2
 
-引用 SECURITY_PRIVILEGE.md 为权限判定权威，此处定义 production PolicyRule v2存储字段；v1仅保留Schema/fixture历史验证资产，无production read/write/migration：
+引用 SECURITY_PRIVILEGE.md 为权限判定权威，此处定义 production PolicyRule v2存储字段。未投产旧PolicyRule合同已按ADR-0010从source/manifest/generated/validation入口直接退役，无production read/write/migration或compat adapter：
 
 ```text
 id
@@ -1316,7 +1316,9 @@ source: user_defined | companion_generated | system
 
 排序、Pattern、Condition、Specificity 和 Default Allow 语义只由 `SECURITY_PRIVILEGE.md` 定义。`actor_match.source_patterns[]` 使用与 ContentOrigin source 相同的规范化 URI segment-glob 语法；空数组表示不限制。Schema 必须实施 `effect = confirm` 与 `confirmation_mode` 的条件约束。Read-only/Restricted 等命名 Mode 若产生限制，必须投影为可见 PolicyRule；Safe Recovery 与 Stop Fence 只在维护 Kernel 一致性和禁止未知副作用盲目重放的范围内作为不可覆盖 Recovery Invariant，不构成第二套通用权限矩阵。
 
-实现约束（`domain-policy` matcher 内部）：普通未匹配与真实评估错误必须用 typed outcome 分离（Matched / NotMatched / `PolicyError`）。禁止用 `invalid_policy_rule` 或任意 magic message 充当“未匹配”哨兵；真实 `PolicyError` 一律 fail closed，不得落入 Default Allow。该约束不改变公开 API、错误码、排序、求值顺序或 winner-only rate-limit 语义。
+实现约束（`domain-policy` matcher）：`evaluate_policy`直接接收`PolicyRuleV2`，`PermissionDecisionDraft.decision`直接使用`PermissionDecisionV2Decision`；五种`ConfirmationModeV1`均为一等输入，`remote_signature`正常产生`RequireRemoteSignature`并参与priority、specificity、winner-only rate-limit与耗尽后的候选fallback。禁止v2→v1转换、Generic probe、remote rule-ID side table、mode/decision adapter。Approval/Identity repository或Provider真实验签的可执行性属于后续事实门，不得改变matcher求值。
+
+普通未匹配与真实评估错误必须用 typed outcome 分离（Matched / NotMatched / `PolicyError`）。禁止用 `invalid_policy_rule` 或任意 magic message 充当“未匹配”哨兵；真实 `PolicyError` 一律 fail closed，不得落入 Default Allow。
 
 ### 6.8 ExplorationScope
 
@@ -1369,7 +1371,7 @@ created_at / updated_at
 
 ### 6.10 ApprovalRecord v2
 
-ApprovalRecord v1仅可作为Schema/fixture历史验证资产，production read/write/migration均禁止（ADR-0009）。v2必须由SchemaGraph表达为两层真正tagged union，禁止任何全部optional的平面替代：外层`record_kind`，内层`subject.subject_kind`。公共顶层字段表：
+ApprovalRecordV2是Approval唯一active合同；未投产旧ApprovalRecord合同已按ADR-0010从source/manifest/generated/validation入口直接退役，无production read/write/migration或compat adapter。v2必须由SchemaGraph表达为两层真正tagged union，禁止任何全部optional的平面替代：外层`record_kind`，内层`subject.subject_kind`。公共顶层字段表：
 
 | 字段 | 类型 | required/null规则 |
 |---|---|---|
@@ -1421,7 +1423,7 @@ Policy、PermissionDecision、Approval request统一使用算法无关闭集：
 ConfirmationModeV1 = generic | local | system_authentication | remote_signature | plan_revision
 ```
 
-PolicyRule v2 production write的`confirmation_mode`只允许该闭集；PolicyRule v1按逐对象lifecycle保留Schema/fixture历史验证资产，无production read/write/migration；不因v2出现而把其它v1对象整体判legacy。PermissionDecision v2映射固定为：`generic→require_confirmation`、`local→require_local_confirmation`、`system_authentication→require_system_authentication`、`remote_signature→require_remote_signature`、`plan_revision→require_plan_revision`。Approval request wire直接复用相同canonical值，不保存算法名或旧别名；UI可显示文案但不得持久化别名。`remote_signature`是正式Policy入口且不绑定算法；算法只由远程response的algorithm tagged union决定。
+PolicyRule v2 production write的`confirmation_mode`只允许该闭集；未投产旧PolicyRule/PermissionDecision/ApprovalRecord合同按ADR-0010直接退役，但这不把其它V1对象整体判legacy，`V1`后缀本身不表示生命周期。PermissionDecision v2映射固定为：`generic→require_confirmation`、`local→require_local_confirmation`、`system_authentication→require_system_authentication`、`remote_signature→require_remote_signature`、`plan_revision→require_plan_revision`。Approval request wire直接复用相同canonical值，不保存算法名或旧别名；UI可显示文案但不得持久化别名。`remote_signature`是正式Policy入口且不绑定算法；算法只由远程response的algorithm tagged union决定。
 
 `SubjectProjectionV1`是`subject_hash`唯一preimage，全部branch封闭且字段与Approval `SubjectV2`一一对应：`schema_version=1`加对应`subject_kind`及§6.10 Subject表的全部字段；字段名、nullability与枚举完全相同，不包含Approval record/chain/head/request/resolution、时间、confirmation mode或evidence。规范化固定为：UUID lowercase canonical text；resource/key/material/proposal/scope/hash为已验证lowercase 64-hex；URI字段若未来branch增加必须按§5.3.1 URI规则；时间若未来增加必须UTC秒精度；普通字符串不trim/Unicode改写；数组仅按Subject branch显式规则处理，当前operation/task_proposal/plan_revision均无可变数组。构造→Schema验证→RFC8785 JCS→UTF-8无BOM/换行→SHA-256 lowercase，结果即`subject_hash`。
 
@@ -1429,8 +1431,9 @@ Approval `subject` wire保存完整`SubjectV2`，不得只保存hash；repositor
 
 Action持久字段统一为`approval_chain_id: UUID|null`；PermissionDecision的`approval_requirement.approval_chain_id`、ApprovalRecord顶层`approval_chain_id`与Action字段必须完全相等，不得另造近义chain字段。Repository暴露闭集方法：
 
-- `append_request(approval_chain_id, expected_head_ref=null, request_record, event_allocation)`；**只创建新链**，链已存在、expected非null或request predecessor非null均拒绝；不得用于replacement；
+- `evaluate_action_permission_and_create_approval(evaluation, approval_chain_id, non_derived_request_facts, event_allocation, audit_record_id)`；**operation初始request的唯一production写入口**，在同一savepoint完成Policy evaluation、PD current binding、Action chain binding与request/head/Audit/Event；链已存在或Action已有链时必须在matcher/rate-limit前拒绝且零写入；不得提供可独立提交的generic `append_request`；
 - `resolve(approval_chain_id, expected_head_ref, resolution_record, authorization_evidence, event_allocation)`；expected/current必须为request；
+- `resolve_approval_and_commit_action(resolve_command, action_transition_allocation)`；复用同一savepoint和UUID collector先完成resolution，再从已提交current head重新派生usable proof并驱动`pending→approved`，caller不得选择PD/Approval refs；
 - `invalidate_and_optionally_replace(approval_chain_id, expected_head_ref, invalidation_record, replacement_request|null, event_allocation)`；current必须为request或approved resolution，replacement若非null必须在同事务成为新head，且invalidation的`replacement_request_ref`等于新request id、replacement的`predecessor_ref`等于invalidation id。
 
 repository current-head查询/映射字段统一命名`current_head_ref`；它不是ApprovalRecord重复字段。
@@ -1492,9 +1495,11 @@ implicit/default/explicit allow与Delegation authority不生成Approval。materi
 
 ### 6.10.6 Approval Event allocation、Repository闭集、唯一键与恢复硬门
 
-`ApprovalEventAllocationV1`是Approval repository三个CAS方法的**正式required对象**：`event_id:UUID,correlation_id:opaque,dedup_key:opaque,changed_at:UTC-second,causation_ref:CausationRefV2`。`event_id`格式合法，`correlation_id`/`dedup_key`非空且独立，`changed_at`为本次业务head变化的唯一时间；`causation_ref`必须为v2正式branch并指向真实外部command/event/action，禁止指向Approval event、同chain或future对象。event ID、chain ID、record IDs、Action/PD IDs与causation所含ID必须按各自语义互异；只有CausationRef明确指向的既有外部事实可以重复引用，任何ID不得由request、chain、Task或idempotency key派生。所有值由上层分配；replay从已提交head mutation/Event读取原allocation，禁止重新分配或用“当前时间”重建。
+`ApprovalEventAllocationV1`是Approval repository三种head mutation命名owner的**正式required对象**：`event_id:UUID,correlation_id:opaque,dedup_key:opaque,changed_at:UTC-second,causation_ref:CausationRefV2`。`event_id`格式合法，`correlation_id`/`dedup_key`非空且独立，`changed_at`为本次业务head变化的唯一时间；`causation_ref`必须为v2正式branch并指向真实外部command/event/action，禁止指向Approval event、同chain或future对象。event ID、chain ID、record IDs、Action/PD IDs与causation所含ID必须按各自语义互异；只有CausationRef明确指向的既有外部事实可以重复引用，任何ID不得由request、chain、Task或idempotency key派生。所有值由上层分配；replay从已提交head mutation/Event读取原allocation，禁止重新分配或用“当前时间”重建。
 
-`append_request`、`resolve`与`invalidate_and_optionally_replace`三种CAS方法均**必须**接收该对象，且在同一`BEGIN IMMEDIATE`内消费其`event_id/correlation_id/dedup_key/changed_at/causation_ref`：成功head变化以`changed_at`投影record、Audit与Event的业务时间，写恰好一个`approval.state_changed`；CAS loser、validation/evidence失败和同事实replay不消费新allocation、不写新Event。Challenge失效Audit不使用本对象，因为Challenge不是Approval chain。
+每个顶层 Approval/Policy repository 命令必须创建**唯一 transaction-bound typed UUID purpose collector**。该 collector 在 matcher、rate-limit consume、Challenge consume/expire、record/head/Audit/Event append、Action intent/CAS 或 Outbox append 中最早写入之前，登记本命令全部 allocations/mirrors，以及该命令实际读取、验证或消费的持久事实 UUID；按路径覆盖 Task/TaskScope/Action/current 与新 PermissionDecision/PolicyRule/Approval chain/request-resolution-invalidation/Challenge/Evidence/Credential/Causation/Audit/Event/ActionTransition，不要求无关路径伪读对象凑集合。复合命令（包括 evaluation+initial request、resolution+Action commit）的 nested prepare/validate/apply 只能借用同一个 collector，不得各自新建局部集合。相同 UUID 只有在指向**同一语义事实且同一 purpose**时可作为 mirror 重复登记；新 PermissionDecision allocation 与命令前 current PermissionDecision reference 属不同生命周期 purpose，必须互异。任一跨层碰撞在 matcher 或任何持久化写入前返回 `contract_invalid`，并保持 rate-limit、Challenge、PD/head/history、Audit、Action/intent/Outbox/sequence/position 全部零变化。
+
+initial request、resolution、invalidation/replacement 三种head mutation的命名owner均**必须**接收该对象，且在同一`BEGIN IMMEDIATE`内消费其`event_id/correlation_id/dedup_key/changed_at/causation_ref`：成功head变化以`changed_at`投影record、Audit与Event的业务时间，写恰好一个`approval.state_changed`；CAS loser、validation/evidence失败和同事实replay不消费新allocation、不写新Event。Challenge失效Audit不使用本对象，因为Challenge不是Approval chain。
 
 `RootTaskCreateAllocationV2`（active root v2）是task component、`kind=object`的正式封闭对象，全部字段required：`schema_version=2,task_id,task_scope_id,content_origin_id,kernel_receipt_id,creation_provenance_id,audit_record_id,task_created_event_id,correlation_id,task_created_dedup_key`。七个UUID格式合法且本对象内两两不同；`schema_version`不计入七UUID。两个opaque值只由Schema强制non-empty，不发明hex、base64或长度格式，也不从request/idempotency/task推导。重放从idempotency record读取原allocation并验证bundle，不重新分配。
 
@@ -1579,10 +1584,10 @@ ID generator purpose闭集至少包含Task、TaskScope、ContentOrigin、KernelR
 
 | repository | 允许方法 |
 |---|---|
-| Action | `insert_pending`、`get`、`compare_and_set_policy_binding`、`acquire_lease`、`transition_with_expected_revision`、`complete_child_materialization`、`release_or_expire_lease`、`list_recovery_candidates` |
+| Action | `insert_pending`（已实现）、`get`（已实现）、policy binding orchestrator（`evaluate_action_permission` 经 crate-private bridge 原子提交 PD 绑定、Action 状态边与事件，已实现）、approval resolution orchestrator（`resolve_approval_and_commit_action` 在一个 savepoint 内解析 Approval、重新派生 usable proof 并驱动 `pending→approved`，已实现）、lease acquire/dispatch/release orchestrator（**未实现**）、child materializer（**未实现**）、recovery orchestrator（**未实现**）。所有 expected-revision/status CAS 都只是对应业务 owner 内部的私有机械实现细节，不得暴露为平行状态迁移入口 |
 | PermissionDecision | `append`、`get`、`get_current_for_action`、`validate_current_for_execution`；不可update/delete |
-| Approval | §6.10.1三种append复合方法、`get_record`、`get_current_head`、`list_history`、`validate_usable_resolution`；不可update/delete；不提供legacy v1 production read/migration API |
-| ActionTransition | §6.14的`insert_intent`、`get_intent`、`get_for_action_revision`、`mark_committed_with_event`、`reconcile_intent` |
+| Approval | §6.10.1三种head mutation的命名owner、`get_record`、`get_current_head`、`list_history`、`validate_usable_resolution`；不可update/delete；不提供generic request append或legacy v1 production read/migration API |
+| ActionTransition | durable/recovery surface为§6.14的`insert_intent`、`get_intent`、`get_for_action_revision`、`reconcile_intent`；`mark_committed_inside`及Policy/Approval/未来Lease·child·Recovery typed bridge只允许crate-internal业务owner调用，不提供通用生产状态迁移入口 |
 | ChildMaterialization | `materialize`、`get_by_action`、`get_by_child_task`、`reconcile`；不可部分append/update/delete |
 | Credential/Challenge/Local/System Evidence | §6.10.2闭集方法 |
 | RootTaskCreate | `create_root_v2`、`get_idempotency_record`、`reconcile_root_create`；v1 write API必须删除，不在production接口 |
@@ -1705,7 +1710,7 @@ created_at
 
 `ActionTransitionIntentV1`后续Schema身份固定为task component、`kind=domain_object`、`compatibility=new-contract`、exact ID `https://schemas.shittim.local/task/action_transition_intent/v1`、exact source `schemas/source/task/action_transition_intent.v1.json`、`schema_version_field=schema_version`，direct refs只有whole-schema retained `ActionStatus`。其Schema与active Action持久对象Schema可先于repository批次落地（见§13.6.4），但transition repository/migration及producer fixture必须与active Action repository同批实现；不得塞入本次八Schema而破坏“恰好八项”，也不得先由producer创建临时类型。
 
-唯一键固定为`transition_id`全局唯一，以及`(action_id, expected_action_revision, execution_generation, from_status, to_status, reason_code)`唯一；同一个intent重放必须canonical readback返回原事实，不分配新transition。Repository闭集为`insert_intent`、`get_intent`、`get_for_action_revision`、`mark_committed_with_event`、`reconcile_intent`；没有update/delete。`mark_committed_with_event`只可在同一事务CAS Action从expected revision/`from_status`到`to_status`并append唯一`action.state_changed`，event causation精确等于该intent的`ActionTransitionRefV1`。读取必须校验intent、Action revision/generation、event payload/causation/correlation和唯一关系；缺失或冲突为`stored_data_invalid`。reconcile只返回`prepared|committed|corrupt`，不得补造event或另换transition id。
+唯一键固定为`transition_id`全局唯一，以及`(action_id, expected_action_revision, execution_generation, from_status, to_status, reason_code)`唯一；同一个intent重放必须canonical readback返回原事实，不分配新transition。Durable/recovery surface为`insert_intent`、`get_intent`、`get_for_action_revision`、`reconcile_intent`；没有update/delete。生产状态边只能由Policy、Approval、未来Lease/child/Recovery等命名业务owner验证typed authority fact后，调用crate-internal mechanical commit。mechanical commit只可在同一事务CAS Action从expected revision/`from_status`到`to_status`并append唯一`action.state_changed`，event causation精确等于该intent的`ActionTransitionRefV1`；不得暴露可让caller自由提供PD/Approval/Lease/Verification evidence的通用production入口。读取必须校验intent、Action revision/generation、event payload/causation/correlation和唯一关系；缺失或冲突为`stored_data_invalid`。reconcile只返回`prepared|committed|corrupt`，不得补造event或另换transition id。
 
 ### 6.15 CausationRef 与 EventEnvelope版本
 
@@ -2274,7 +2279,7 @@ MethodVersionBinding与manifest entry的`compatibility`是正交维度：binding
 
 - `name`是非空 component 标识，唯一；`namespace`必须是 canonical absolute http(s) URL、无 fragment、以`/`结尾，且处于root `id_base`下的单一直接路径组件（`https://schemas.shittim.local/<name>/`）；不得使用prefix、dot segment、double slash、percent-encoded component或显式default port伪装组件；`name`必须等于该单一路径段。
 - `allowed_refs`是严格升序、无重复的其它 component name 数组；不得声明自身或未知component。跨 component `$ref` 只有目标component在源component `allowed_refs`中才可解析；同component可引用。此component-ref gate独立于且不得替代generation target closure：gate通过后，依赖仍必须声明同一generation target。
-- `retained_ids`是严格升序、无重复的canonical absolute schema IDs；一个retained ID恰好对应一个当前manifest entry及其完全未改写的source `$id`。因此retained ID禁止重绑到别的component、禁止孤儿、禁止重复；entry ID如落入任一retained set，必须恰好由其所属component保留。当前41个历史`/v1/` IDs以版本控制的不可变迁移ledger（`schemas/fixtures/manifest/retained_ids.v1.json`）逐项固定`id/component/source/source_sha256`，`SchemaRegistry::load`逐项计算实际source bytes SHA-256并同时核对manifest所有权/路径，因此ledger是每次load的生产gate，不能通过协同移动`retained_ids`和entry `component`、改路径或单独篡改仍合法的Schema bytes绕过。ledger只记录迁移时的41个历史ID；本批12个新component-native ID及以后所有新ID都不得加入。retained ID不得落在任何component namespace，component-native ID也不得落入retained集合；不允许新的非retained `/v1/` entry。
+- `retained_ids`是严格升序、无重复的canonical absolute schema IDs；一个retained ID恰好对应一个当前manifest entry及其完全未改写的source `$id`。因此retained ID禁止重绑到别的component、禁止孤儿、禁止重复；entry ID如落入任一retained set，必须恰好由其所属component保留。当前38个retained `/v1/` IDs以版本控制ledger（`schemas/fixtures/manifest/retained_ids.v1.json`）逐项固定`id/component/source/source_sha256`，`SchemaRegistry::load`逐项计算实际source bytes SHA-256并同时核对manifest所有权/路径。该ledger在namespace迁移时曾含41项；ADR-0010因fresh baseline无production数据且无Schema source consumer，直接退役已被active v2完整替代的PolicyRule/PermissionDecision/ApprovalRecord三项。此退役无migration、compat或旧validation入口；剩余38项仍是production gate。新component-native ID不得加入ledger；retained ID不得落在任何component namespace，component-native ID也不得落入retained集合；不允许新的非retained `/v1/` entry。fixture文件名中的`v1`是ledger格式版本，不表示每个条目都是legacy。
 - `method_version_bindings`为manifest v2 required typed字段，元素wire shape就是§13.5的完整`MethodVersionBinding`。通用`SchemaRegistry::load`允许并完整验证合法非空synthetic registry；production `schemas/manifest.json`自切片3a起必须精确等于§13.5目标表（八方法完整集），由`validate_production_manifest_stage`断言；不得把“某一阶段为空”实现成通用empty-only loader规则。
 - `compatibility`正式闭集固定且只允许`v1-stable | new-contract | breaking-replacement | legacy-validation-only | legacy-read-only`，所有production、synthetic、fixture与test manifest一律使用这五值，不得增加任何测试专用或预留的演化标签值，也不得设置测试旁路。一般判定规则为：`breaking-replacement`用于存在明确被替换旧wire contract的新独立版本；`new-contract`用于没有旧wire contract被替换的新对象，包括projection/allocation；`legacy-validation-only`只供显式历史输入Schema validation/fixture，不得用于production write、read或active response；`legacy-read-only`只供历史持久事实/response读取校验，不得作为request。`v1-stable`表示该retained合同仍按其引用方生命周期稳定使用。该字段与MethodVersionBinding lifecycle正交；尤其`new-contract`不表示public method可调用，也不等于internal visibility。正式闭集中没有`internal` compatibility：projection/allocation使用`new-contract`，依靠entry `kind`及“不得被MethodVersionBinding引用”的验证约束保持internal，不得增造第六种值或借compatibility表达可见性。
 - 非retained component-native entry的ID必须**精确**为`https://schemas.shittim.local/<component>/<snake_case_name>/v<version>`，source必须精确镜像为`schemas/source/<component>/<snake_case_name>.v<version>.json`。一般情况下，`snake_case_name`由entry `title`移除末尾精确版本后缀`V<version>`后按项目canonical snake_case规则得到。KCP envelope是规范化命名空间已编码的固定规则：hard gate必须按`component=kcp`、`kind=envelope`与title精确为`KcpCommandEnvelopeV2`/`KcpQueryEnvelopeV2`应用规范stem，显式去掉领域前缀`Kcp`，分别固定为`command_envelope`/`query_envelope`；因此Command Envelope的ID/source固定为`https://schemas.shittim.local/kcp/command_envelope/v2`与`schemas/source/kcp/command_envelope.v2.json`，Query Envelope的ID/source固定为`https://schemas.shittim.local/kcp/query_envelope/v2`与`schemas/source/kcp/query_envelope.v2.json`，不得生成`kcp_kcp...`。这不是任意例外，而是component已编码kcp命名空间的规范stem规则。`snake_case_name`结果为一个或多个小写ASCII字母/数字片段以下划线连接，不允许大写、连字符、空片段。
@@ -2314,7 +2319,7 @@ production manifest的component-native entry分批次落地：首批为以下**�
 
 `{九字段}`是表述集合，不是合法literal ref path；source中必须逐项写出精确fragment。`TaskCreateRequestV2`/`TaskCreateResponseV2`属于`kcp→task/common` closure，两个Envelope属于`kcp→common`，`RootTaskCreateIdempotencyProjectionV1`明确属于`task→common`，两个allocation文档无refs。
 
-production manifest现已将retained `TaskCreateRequestV1`、`KcpCommandEnvelopeV1`、`KcpQueryEnvelopeV1` entry的`compatibility`标为`legacy-validation-only`，并将retained `TaskCreateResponseV1`标为`legacy-read-only`；其余retained 37项保持`v1-stable`。该compatibility改标只改变manifest演化标签，不得改41项retained ledger的ID/component/source/source SHA-256，也不得改对应source bytes；后续变更必须持续通过ledger、source hash与lifecycle测试证明这些不变量。
+production manifest现已将retained `TaskCreateRequestV1`、`KcpCommandEnvelopeV1`、`KcpQueryEnvelopeV1` entry的`compatibility`标为`legacy-validation-only`，并将retained `TaskCreateResponseV1`标为`legacy-read-only`；其余retained 34项保持`v1-stable`。当前production精确为`80 = 38 retained + 42 component-native`。旧PolicyRule/PermissionDecision/ApprovalRecord三项不属于任何compatibility lifecycle，已按ADR-0010直接退役；后续变更必须持续通过ledger、source hash、无旧ID入口与lifecycle测试证明这些不变量。
 
 - registry在构造公开对象前调用单一权威`SchemaNode` walker。walker以pre-order提供canonical JSON Pointer、`is_root`与object/boolean node callback，并只遍历下列Draft 2020-12 Schema-bearing位置：map value `properties`、`patternProperties`、`dependentSchemas`、`$defs`、`definitions`；single Schema `additionalProperties`、`unevaluatedProperties`、`propertyNames`、`items`、`contains`、`unevaluatedItems`、`contentSchema`、`not`、`if`、`then`、`else`；Schema array `prefixItems`、`allOf`、`anyOf`、`oneOf`。存在但容器/node类型错误立即失败。loader对每个document用该walker建立私有不可变的authoritative SchemaNode pointer index；`resolve_ref`和public `schema_at`必须先验证目标pointer属于该index，raw JSON pointer lookup只能crate-private且命名明确。`$ref`指向`const/default/examples/enum`等实例位置时，即使目标JSON长得像Schema也fail closed；`$defs/properties/items`等合法Schema位置通过。restricted identity audit、registry `$ref` resolution/component gate、generation target dependency closure及restricted codegen support-profile audit均复用该walker callback，不得复制第二套通用位置闭集；target envelope提取只允许作为已命名的特定IR结构读取。`$ref`只在Schema node检查，禁止递归进入实例数据。map中的`$ref/$id/$schema/$dynamicRef`只是普通property/definition名称，其value仍作为Schema遍历。
 - restricted identity/ref profile：仅root允许`$id`与`$schema`；任何nested非root `$id`/`$schema`立即失败；当前不支持的`$anchor`、`$dynamicAnchor`、`$dynamicRef`、`$recursiveAnchor`、`$recursiveRef`、`$vocabulary`均立即失败。上述invariant由`SchemaRegistry::load`统一实施，因此validate/check/generate不能绕过或延后。
@@ -2330,11 +2335,11 @@ TransactionFs 只覆盖语义 mutation/durability boundary，不宣称底层 OS 
 
 registry按URL scheme/host/port/path组件校验上述归属，禁止裸prefix。relative `$ref`在新root base下解析后仍须命中registry，并先受component-ref gate、再受target closure约束。生成物catalog同时可解析旧retained ID与未来component ID。
 
-测试覆盖manifest strict/v1拒绝、component prefix伪装、dot/double slash、percent encoding、default port、旧ID byte preservation、retained source合法Schema bytes篡改、retained重绑/协同搬家/真实孤儿/重复、retained与component namespace互斥、component-native精确三segment ID/source镜像/version一致、query/fragment/encoded/dot/empty/`.json` URL负例、source absolute/`..`/source-root外repo-relative/backslash/empty/dot/prefix trick、file/ancestor symlink、nested `$id` load拒绝、`$dynamicRef`跨component在validate/check/generate均load失败、跨component未声明ref、relative/absolute/local refs、target closure独立、CLI validate在registry load时拒绝未授权ref、synthetic合法非空binding与完整负例、production empty gate、两次生成稳定与失败无部分写。迁移ledger由每次registry load固定SHA-256验证41份source相对迁移前基线字节不变；这些generated hash不进入永久fixture，后续合法生成变更由Git基线审阅。
+测试覆盖manifest strict/v1拒绝、component prefix伪装、dot/double slash、percent encoding、default port、旧ID byte preservation、retained source合法Schema bytes篡改、retained重绑/协同搬家/真实孤儿/重复、retained与component namespace互斥、component-native精确三segment ID/source镜像/version一致、query/fragment/encoded/dot/empty/`.json` URL负例、source absolute/`..`/source-root外repo-relative/backslash/empty/dot/prefix trick、file/ancestor symlink、nested `$id` load拒绝、`$dynamicRef`跨component在validate/check/generate均load失败、跨component未声明ref、relative/absolute/local refs、target closure独立、CLI validate在registry load时拒绝未授权ref、synthetic合法非空binding与完整负例、production stage gate、两次生成稳定与失败无部分写。ledger由每次registry load固定SHA-256验证当前38份retained source字节；旧PolicyRule/PermissionDecision/ApprovalRecord ID/source/generated/validator/example/test入口必须全无。这些generated hash不进入永久fixture，后续合法生成变更由Git基线审阅。
 
 ### 13.6.2 Event v2 八Schema实现合同（Schema/compiler/generated已落地）
 
-本批已一次性加入恰好八项，该批落地后production manifest为61项（41 retained + 20 component-native；其后切片1a增至65项，见§13.6.3），production `method_version_bindings`继续为空。Schema source、manifest identity、single mapping IR、Event Catalog与typed decode已实现；后续第二实现段也已完成migration 0003、mixed Outbox API、strict stored decoder与savepoint poison（历史：mixed API的legacy append与LegacyV1 runtime variant已在切片3c按ADR-0009删除，当前production Outbox为v2-only）。producer/Publisher/runtime仍未实现。
+历史快照：本批一次性加入恰好八项后production manifest为61项（当时41 retained + 20 component-native；其后切片1a增至65项），production `method_version_bindings`当时为空。Schema source、manifest identity、single mapping IR、Event Catalog与typed decode已实现；后续第二实现段也已完成migration 0003、mixed Outbox API、strict stored decoder与savepoint poison（历史：mixed API的legacy append与LegacyV1 runtime variant已在切片3c按ADR-0009删除，当前production Outbox为v2-only）。producer/Publisher/runtime仍未实现。
 
 | title | component | kind | compatibility | exact ID | exact source | schema_version_field | direct refs |
 |---|---|---|---|---|---|---|---|
@@ -2355,7 +2360,7 @@ active claimant、Catalog/typed生成及常量命名以§5.6为准；八项现�
 
 ### 13.6.3 V2InitialBuildActive切片1a：root持久对象四Schema（Schema/compiler/generated已落地）
 
-切片1a在61项基线上新增四个component-native root；该批落地时production manifest为65项（41 retained + 24 component-native），切片1b后现行为70项（见§13.6.4）。`method_version_bindings`继续为空；repository/handler/producer不在本切片：
+历史快照：切片1a在61项基线上新增四个component-native root；该批落地时production manifest为65项（当时41 retained + 24 component-native），切片1b后为70项。`method_version_bindings`当时为空；repository/handler/producer不在本切片：
 
 | title | component | kind | compatibility | exact ID | exact source | direct refs |
 |---|---|---|---|---|---|---|
@@ -2366,11 +2371,11 @@ active claimant、Catalog/typed生成及常量命名以§5.6为准；八项现�
 
 `AuditAllocationV2`按§6.16.0a的“正式required对象”、独立Audit路径Schema验证与跨语言传递要求source化；它不是仅在Rust内使用的allocation snapshot。`TaskCreationProvenanceV1`必须lower为schema-tool原生`TaggedUnion`，只允许`root_command_v2|child_action_v2`，不得恢复legacy/import分支或生成全部optional平面struct。
 
-component DAG同步为：`common→[]`、`policy→[common]`、`audit→[common,policy]`、`task→[common,policy]`；后两者为本领域v2依赖闭包预留明确合法边，当前四source的实际direct refs仍只命中common。DAG无环，41 retained ownership/source bytes不变。
+component DAG同步为：`common→[]`、`policy→[common]`、`audit→[common,policy]`、`task→[common,policy]`；后两者为本领域v2依赖闭包预留明确合法边，当前四source的实际direct refs仍只命中common。DAG无环；该阶段41项retained ownership/source bytes不变。
 
 ### 13.6.4 V2InitialBuildActive切片1b：Action/child授权五Schema（Schema/compiler/generated与pure crate已落地）
 
-切片1b在65项基线上新增五个component-native root，production manifest现为70项（41 retained + 29 component-native），`method_version_bindings`继续为空；repository、handler、materializer与producer不在本切片：
+历史快照：切片1b在65项基线上新增五个component-native root，该阶段production manifest为70项（当时41 retained + 29 component-native），`method_version_bindings`当时为空；repository、handler、materializer与producer不在本切片：
 
 | title | component | kind | compatibility | exact ID | exact source | direct refs |
 |---|---|---|---|---|---|---|
@@ -2388,11 +2393,11 @@ retained `VerificationResultV1`已完整承载child materialization所需的Kern
 
 IC §5.3.1要求的authorization projection official fixtures已落地为测试制品（wrapper非business Schema、不进manifest）：`schemas/fixtures/task/child_task_delta_projection.v1.json`、`schemas/fixtures/policy/material_authorization_projection.v1.json`、`schemas/fixtures/policy/observation_evidence_not_applicable.v1.json`、`schemas/fixtures/policy/observation_evidence_observed.v1.json`。每份含raw Facts JSON、normalized object、`jcs_utf8_hex`/`sha256`与tamper；`not_applicable`与`observed`各自独立，observed覆盖snapshot成对空值、证据排序与伪provider负例。shared wrapper owner为`schema-tool::official_fixture::ProjectionFixture`；production harness为`kernel-authorization` tests，CLI oracle为`schema-tool` tests。
 
-component DAG不变：`policy→[common]`、`task→[common,policy]`均覆盖本批direct refs，保持无环；41 retained ownership/source bytes不变。
+component DAG不变：`policy→[common]`、`task→[common,policy]`均覆盖本批direct refs，保持无环；该阶段41项retained ownership/source bytes不变。
 
 ### 13.6.5 V2InitialBuildActive切片1c-i：授权核心五Schema（Schema/compiler/generated与Subject pure API已落地）
 
-切片1c-i在70项基线上新增五个policy component-native root，production manifest现为75项（41 retained + 34 component-native），`method_version_bindings`继续为空；Credential/Challenge/Evidence/Remote signature家族明确留给1c-ii，repository、CAS、producer不在本切片：
+历史快照：切片1c-i在70项基线上新增五个policy component-native root，该阶段production manifest为75项（当时41 retained + 34 component-native），`method_version_bindings`当时为空；Credential/Challenge/Evidence/Remote signature家族明确留给1c-ii，repository、CAS、producer不在本切片：
 
 | title | component | kind | compatibility | exact ID | exact source | direct refs |
 |---|---|---|---|---|---|---|
@@ -2410,7 +2415,7 @@ component DAG保持`policy→[common]`无环；41 retained ownership/source byte
 
 ### 13.6.6 V2InitialBuildActive切片1c-ii：身份/挑战/证据与远程签名八Schema（Schema/compiler/generated已落地）
 
-切片1c-ii在75项基线上新增八个policy component-native root，production manifest现为83项（41 retained + 42 component-native），`method_version_bindings`继续为空；repository、CAS、producer与真实验签路径不在本切片：
+历史快照：切片1c-ii在75项基线上新增八个policy component-native root，该阶段production manifest为83项（当时41 retained + 42 component-native），`method_version_bindings`当时为空；ADR-0010退役三项旧Policy合同后当前为80（38+42）。repository、CAS、producer与真实验签路径不在本切片：
 
 | title | component | kind | compatibility | exact ID | exact source | direct refs |
 |---|---|---|---|---|---|---|
@@ -2431,7 +2436,7 @@ component DAG保持`policy→[common]`无环；41 retained ownership/source byte
 
 ### 13.6.7 V2InitialBuildActive切片2：fresh SQLite 基线 + root TaskCreate v2 repository（已落地）
 
-切片2不新增manifest Schema（仍为83项；当时production bindings仍空，切片3a后bindings为§13.5八方法集）。它在`kernel-sqlite`落地：
+历史快照：切片2不新增manifest Schema（该阶段仍为83项；production bindings当时为空，切片3a后为§13.5八方法集；ADR-0010后当前Schema为80项）。它在`kernel-sqlite`落地：
 
 1. **migration 0004**（descriptor v1，`SchemaOnly` phase set）：`content_origins_v2`（canonical `record_json` + 生成列投影 + `content_origin_v2_parent_refs` 序列表）、`task_creation_provenances`（`record_json` + kind 投影 + 显式 `task_id` 列，读回强制列值与对应 Task 一致）、`audit_records_v2`、`root_task_create_idempotency_v2`（scope 四元组唯一 + `request_hash` + `created_task_id`/`creation_provenance_id`）。为允许 Task/Scope 引用 ContentOriginV2，0004 重建 `tasks`/`task_scopes`/`task_scope_source_refs`/`task_create_idempotency`，去掉对 v1 `content_origins` 的硬 FK，但恢复 `tasks.task_scope_ref → task_scopes` deferred FK（与 `task_scopes.task_id → tasks` 成环，同批重建可行）；origin 存在性由 repository canonical readback 证明。0001–0003 asset bytes 不变。
 2. **root repository** `WriteTransaction::create_root_task_v2(RootTaskCreateV2Command)`：输入 `TaskCreateRequestV2` + `RootTaskCreateAllocationV2` + envelope facts + 调用方注入的唯一 `accepted_at`（repository 不读时钟）。流程固定为 `kernel-task-creation` normalize/receipt/idempotency/allocation validate → 统一 savepoint 内按顺序写 ContentOriginV2、TaskScope v1、TaskSpec v1（`parent_task_id=null`）、`TaskCreationProvenanceV1(root_command_v2)`、`AuditRecordV2(task.creation_recorded)` → 再写 idempotency → 最后 `append_active_event_v2(task.created)` → 与 Created 等价的全闭包 canonical readback（Task/Origin/Scope/Provenance↔task/Audit/Outbox Event/idempotency 交叉一致）。同 scope 四元组 + 同 hash 重放执行同一闭包读回并返回已存 Task（不产生新 Event）；异 hash → `idempotency_conflict`；mapping 存在但闭包不完整 → `stored_data_invalid`，不写新事实。失败整体回滚不占号。
@@ -2439,11 +2444,11 @@ component DAG保持`policy→[common]`无环；41 retained ownership/source byte
 
 ### 13.6.8 V2InitialBuildActive切片3a：production MethodVersionBindings基础层（Schema/tools/generated已落地）
 
-切片3a不新增manifest Schema（仍为83项）。它在production `schemas/manifest.json`写入精确八方法`method_version_bindings`（IC §13.5目标表），并将`validate_production_manifest_stage`从“必须为空”翻转为“必须精确等于从registry V2 Envelope facts派生的完整expected set + §13.5 lifecycle目标”。schema-tool重新生成非空`METHOD_VERSION_BINDINGS`与可用`select_request_version`。**本切片不改**kernel-kcp preflight/dispatcher（仍消费retained v1 catalog）；runtime method-aware切换属切片3b。generated binding catalog只证明library facts，不表示dispatcher/handler/server可用。
+历史快照：切片3a不新增manifest Schema（该阶段为83项；ADR-0010后当前为80项）。它在production `schemas/manifest.json`写入精确八方法`method_version_bindings`（IC §13.5目标表），并将`validate_production_manifest_stage`从“必须为空”翻转为“必须精确等于从registry V2 Envelope facts派生的完整expected set + §13.5 lifecycle目标”。schema-tool重新生成非空`METHOD_VERSION_BINDINGS`与可用`select_request_version`。**本切片不改**kernel-kcp preflight/dispatcher（仍消费retained v1 catalog）；runtime method-aware切换属切片3b。generated binding catalog只证明library facts，不表示dispatcher/handler/server可用。
 
 ### 13.6.9 V2InitialBuildActive切片3b：method-aware KCP runtime（kernel-kcp已落地）
 
-切片3b不新增manifest Schema（仍为83项）。它在`kernel-kcp`落地：
+历史快照：切片3b不新增manifest Schema（该阶段为83项；ADR-0010后当前为80项）。它在`kernel-kcp`落地：
 
 1. **preflight**：废弃全局`schema_version==1`强制；先做 correlatable `request_id` → family → protocol → auth → method（`KCP_ENVELOPE_AUTHORITY_*`）→ 根`payload.schema_version`形状 → `select_request_version`（Active 继续；LegacyValidationOnly/Unsupported → `unsupported_schema_version`）→ V2 Command/Query Envelope Schema + active request Schema + typed decode。`task.create` v2 → Accepted；v1 → unsupported；其余七方法 v1 → Active。
 2. **dispatcher**：`RegisteredRequest` 的 create variant 为内部 `TaskCreateCommandRequestV2`（禁止合同禁止的 `TypedKcpCommandEnvelopeV2` 泛型 wrapper）；其余方法保持 v1 或 KnownCatalogMethodNotImplemented。
@@ -2466,22 +2471,22 @@ component DAG保持`policy→[common]`无环；41 retained ownership/source byte
 
 ### 13.6.11 V2InitialBuildActive切片4a：Action 持久化 + ActionTransitionIntent repository + `action.state_changed` producer（已落地）
 
-切片4a不新增manifest Schema（仍为83项）。它在`kernel-sqlite`落地：
+切片4a不新增manifest Schema（该阶段为83项；ADR-0010退役三项旧Policy合同后当前为80项）。它在`kernel-sqlite`落地：
 
 1. **migration 0006**（descriptor v1，`SchemaOnly`）：`actions`（canonical `record_json` + 投影列 `id/task_id/status/revision/approval_chain_id/permission_decision_ref/execution_generation`；current snapshot 唯一键 `id`；`task_id → tasks` FK）与 `action_transition_intents`（canonical `record_json` + 投影列；`transition_id` UNIQUE；业务唯一键 `(action_id, expected_action_revision, execution_generation, from_status, to_status, reason_code)`；`committed_event_id` 可空；`action_id → actions` FK）。intent `record_json` 不可变；`committed_event_id` 只能 null→set 一次。
-2. **Action repository**（`action.rs`）：本片实现闭集子集 `insert_pending`（`insert_pending_action`）、`get`（`get_action`）；`transition_with_expected_revision` 为 **crate-private** 内部 CAS helper（不写 Outbox，不是状态事件双写权威）。pending draft 固定 `status=pending`、`revision=1`、policy refs null；CAS 以 expected revision+status 更新 current snapshot；canonical JCS readback；stored corruption → `stored_data_invalid`。边合法性与 evidence 委托 `domain-task`（`is_action_transition_allowed` / `apply_action_transition`），非法边 fail closed。**需 lease/lock effects 的边当前 fail closed**（lease API 未落地前禁止静默半提交）。**明确未实现**：`compare_and_set_policy_binding`、`acquire_lease`、`complete_child_materialization`、`release_or_expire_lease`、`list_recovery_candidates`。
-3. **ActionTransitionIntent repository**（`action_transition.rs`）：闭集五方法 `insert_intent` / `get_intent` / `get_for_action_revision` / `mark_committed_with_event` / `reconcile_intent`。同事实重放返回原 intent；双唯一键冲突 fail closed；`mark_committed_with_event` 是会发 `action.state_changed` 的边的**唯一权威**：同一 savepoint 内先 `apply_action_transition`（完整 evidence 门；intent 只作 anchor+唯一键）→ CAS Action（expected revision/`from_status`→`to_status`）+ `append_active_event_v2(action.state_changed)`（payload 从 commit 后 Action+intent+`ActionEventIntent` 投影；causation 精确 `CausationRefV2::ActionTransition{action_id,transition_id}`）+ 回写 `committed_event_id`；失败不占 sequence/position。幂等 mark / `reconcile_intent` 的 Committed 只验 intent↔event 快照链路，不要求 Action head 仍停在该 revision；后续合法推进不得映射 Corrupt。`reconcile_intent` 只返回 `prepared|committed|corrupt`，不补造 event 或更换 transition id。
+2. **Action repository**（`action.rs`）：实现闭集子集 `insert_pending`（`insert_pending_action`）、`get`（`get_action`）、`compare_and_set_policy_binding`。pending draft 固定 `status=pending`、`revision=1`、policy refs null；canonical JCS readback；stored corruption → `stored_data_invalid`。边合法性与 evidence 委托 `domain-task`（`is_action_transition_allowed` / `apply_action_transition`），非法边 fail closed。**状态迁移无公开裸 CAS 入口**：`cas_transition_for_intent` 为私有机械 primitive，只能由 owner 编排器驱动，不自行解释业务 evidence；任何成功状态边恰好产生一条 `action.state_changed`，不存在“改状态不写事件”的平行路径。**需 lease/lock effects 的边当前 fail closed**（lease API 未落地前禁止静默半提交）。**明确未实现**：`acquire_lease`、`complete_child_materialization`、`release_or_expire_lease`、`list_recovery_candidates`。
+3. **ActionTransitionIntent repository**（`action_transition.rs`）：durable/recovery surface为 `insert_intent` / `get_intent` / `get_for_action_revision` / `reconcile_intent`。同事实重放返回原 intent；双唯一键冲突 fail closed。状态事件唯一机械权威是 crate-internal `mark_committed_inside`，只接受命名 Policy/Approval/未来Lease·child·Recovery owner 已验证的 typed fact：同一 savepoint 内 `apply_action_transition`（完整 evidence 门；intent 只作 anchor+唯一键）→ CAS Action（expected revision/`from_status`→`to_status`）+ `append_active_event_v2(action.state_changed)`（payload 从 commit 后 Action+intent+`ActionEventIntent` 投影；causation 精确 `CausationRefV2::ActionTransition{action_id,transition_id}`）+ 回写 `committed_event_id`；失败不占 sequence/position。裸 `mark_committed_with_event` 仅可作为 `cfg(test)` 机械闭包测试 wrapper，不属于 production repository surface。幂等 commit / `reconcile_intent` 的 Committed 只验 intent↔event 快照链路，不要求 Action head 仍停在该 revision；后续合法推进不得映射 Corrupt。`reconcile_intent` 只返回 `prepared|committed|corrupt`，不补造 event 或更换 transition id。
 4. **明确不在本切片**：PermissionDecision / Approval / Identity repositories、child materializer、其余 Action 闭集写方法、Publisher/poll、§13.7 全谓词闭合。
 
 ### 13.6.12 V2InitialBuildActive切片4b：PolicyRule v2 持久化 + PermissionDecision v2 仓库 + Action 评估编排（已落地）
 
-切片4b不新增manifest Schema（仍为83项）。它在`kernel-sqlite`落地：
+切片4b不新增manifest Schema（该阶段为83项；ADR-0010退役三项旧Policy合同后当前为80项）。它在`kernel-sqlite`落地：
 
 1. **migration 0007**（descriptor v1，`SchemaOnly`）：`policy_set_metadata`（全局单行 id=1，bootstrap `revision=0` 表示权威空 PolicySet，非伪造规则集）、`policy_rules`（canonical `record_json` + 投影 `rule_id/revision/effect/priority/enabled/created_at`；唯一 `(rule_id,revision)`；append-only 无 update/delete；current head = 每 rule_id 的 MAX(revision)）、`permission_decisions`（canonical `record_json` + 投影 `id/action_id/decision_revision/evaluated_at/decision/material_fingerprint/observation_fingerprint/policy_set_revision`；`id` 唯一；唯一 `(action_id,decision_revision)`；`action_id → actions` FK；immutable 无 update/delete）。
 2. **PolicyRule repository**（`policy_rule.rs`）：`append_policy_rule_revision`（连续 revision，同事务递增 global policy_set revision）、`get_policy_rule_revision` / `get_current_policy_rule` / `list_current_policy_rules` / `get_policy_set_revision`；空集合法；canonical JCS readback；物理删除禁止，disable 靠新 revision `enabled=false`。
-3. **PermissionDecision repository**（`permission_decision.rs`）：`append_permission_decision`（repository 分配 `decision_revision = max(action)+1`，断号/冲突 fail closed）、`get_permission_decision` / `get_current_permission_decision_for_action` / `list_permission_decisions_for_action` / `validate_current_permission_decision_for_action`（Action.permission_decision_ref 与 PD current 双向一致）；不可 update/delete。
-4. **评估编排**（`evaluation.rs`）：`evaluate_action_permission` 单 savepoint：读 Action/Task/Scope + PolicySet 快照 →（可选）TaskScope containment → enabled PolicyRuleV2 heads 转 domain-policy matcher 表面（`remote_signature` 规则 fail closed 不进入生产决策，直到 matcher 升级 v2）→ `evaluate_policy`（注入 `TransactionRateLimitPort`）→ `kernel-authorization` 真实重算 material/observation fingerprint（禁用 evaluation_context_hash；material preimage 的 policy_set_revision 与 PD 存储值一致，空 PolicySet 为 0，共享 `material_policy_set_revision_for_projection` helper）→ append PD + `permission.evaluated` AuditRecordV2（`policy_context` 与 PD matched_rule_ref/policy_set_revision/fingerprints/decision_revision 一致）→ `domain_task::apply_policy_evaluation_outcome` 投影：allow→approved、deny→cancelled 的状态边经 ActionTransitionIntent + `mark_committed_with_event` 同事务发 `action.state_changed`（与 4a 唯一权威一致，reason_code=policy_allow|policy_deny），require_*→pending deferred 为 metadata CAS 不发事件（不创建 Approval；confirm deferral 绑定真实 PD；`approval_chain_id` 仍 null）。失败整体回滚不占 PD/audit/rate-limit。
-5. **明确不在本切片**：Approval / Identity repositories、Approval 创建（4c）、child materializer、Action lease/policy-binding 闭集其余写方法、Publisher/poll、§13.7 全谓词闭合。
+3. **PermissionDecision repository**（`permission_decision.rs`）：crate-internal `append_permission_decision`只允许评估编排调用，repository 分配 `decision_revision = max(action)+1`，断号/冲突 fail closed；公开只读为`get_permission_decision` / `get_current_permission_decision_for_action` / `list_permission_decisions_for_action` / `validate_current_permission_decision_for_action`（Action.permission_decision_ref 与 PD current 双向一致）；不可 update/delete，也不能写出未绑定Action的孤立PD。
+4. **评估编排**（`evaluation.rs`）：`evaluate_action_permission` 单 savepoint：先以该顶层命令唯一 transaction-bound typed UUID collector 登记 PD/audit/transition/event allocations → 读 Action/Task/Scope/current PD + PolicySet heads并在 matcher/rate-limit 前将这些持久事实登记到同一 collector（新 PD allocation 与命令前 current PD reference 必须互异）→ 强制 TaskScope containment → enabled PolicyRuleV2 heads直接传给`domain-policy::evaluate_policy`（注入 `TransactionRateLimitPort`；无v2→v1转换、Generic probe、remote rule-ID side table或mode/decision adapter）→ `kernel-authorization`真实重算 material/observation fingerprint（禁用 evaluation_context_hash；material preimage 的 policy_set_revision 与 PD 存储值一致，空 PolicySet 为0，共享 `material_policy_set_revision_for_projection` helper）→ append PD + `permission.evaluated` AuditRecordV2（`policy_context` 与 PD matched_rule_ref/policy_set_revision/fingerprints/decision_revision 一致）→ `domain_task::apply_policy_evaluation_outcome`投影：allow→approved、deny→cancelled 的状态边经 ActionTransitionIntent + crate-internal Policy owner bridge 同事务发`action.state_changed`（与4a唯一机械权威一致，reason_code=policy_allow|policy_deny），五种confirmation mode均形成对应`PermissionDecisionV2Decision`并保持pending deferred metadata CAS、不发Action状态事件。`evaluate_action_permission_and_create_approval` 继续借用同一 collector 登记chain/request/Approval Event/Audit，不得在nested Approval阶段重建局部集合。任一purpose碰撞或后续失败整体回滚，不占PD/audit/rate-limit/Outbox sequence。
+5. **明确不在本切片**：Approval / Identity repositories与Approval创建由4c实现；child materializer、Action lease/policy-binding闭集其余写方法、Publisher/poll、Provider真实远程验签、§13.7全谓词闭合不在4b。
 
 ### 13.7 V2InitialBuildActive唯一谓词
 
@@ -2499,10 +2504,10 @@ component DAG保持`policy→[common]`无环；41 retained ownership/source byte
 
 ### 13.6.13 V2InitialBuildActive切片4c：Approval v2 current-head CAS + Identity repositories（已落地）
 
-切片4c不新增manifest Schema（仍为83项）。它在`kernel-sqlite`落地：
+切片4c不新增manifest Schema（该阶段为83项；ADR-0010退役三项旧Policy合同后当前为80项）。它在`kernel-sqlite`落地：
 
 1. **migration 0008**（descriptor v1，`SchemaOnly`）：`approval_records`（canonical `record_json` + 投影 `id/chain_id/record_kind/subject_kind/predecessor_ref/created_at/expires_at`；immutable；`(chain_id, predecessor_ref)` 非null时唯一后继）、`approval_chain_heads`（每 chain 唯一 `current_head_ref` + head kind + updated_at；repository CAS，不按 created_at/max(id) 猜 head）、`identity_credentials`（`(credential_id, revision)` 唯一；至多一个 active；status 为合同态字段，rotate/revoke 由 repository-only CAS 重写 + canonical readback）、`identity_challenges`（每 challenge 单行；`challenge_type` 显式映射列；nonce/request 唯一；终态转移 repository-only CAS）、`identity_evidence`（immutable；`evidence_type` 显式映射列）。
-2. **Approval repository**（`approval.rs`）：三个复合 CAS 方法为唯一写入口——`append_request`（仅新链；expected/predecessor 必须 null）、`resolve`（expected head 必须为 request；resolution.request_ref 与 predecessor 等于 current head；canonical subject 与链相等；证据按 mode 校验）、`invalidate_and_optionally_replace`（expected head 为 request 或 approved resolution；replacement 时 `replacement_request_ref`/`predecessor_ref` 链式精确）。每成功 head 变化同事务写 immutable record(s)、唯一 current-head CAS、恰好一条 `approval.state_changed`（payload 按 `change_kind` 四值真值表从提交事实投影）与对应 `approval.requested|resolved|invalidated` Audit；CAS 冲突返回 `approval_head_conflict`（ConstraintViolation），replay/validation 失败不消费 allocation 不产 Event。远程验签属 Provider 边界，本切片只做存在性/绑定/终态/活性/时间纪律校验。
+2. **Approval repository**（`approval.rs`）：三种head mutation由命名owner独占——operation初始request只可经`evaluate_action_permission_and_create_approval`与Policy evaluation/PD/Action binding同一savepoint创建，不存在generic独立`append_request`；`resolve`要求expected head为request且resolution.request_ref/predecessor等于current head、canonical subject与链相等、证据按mode校验；需要批准Action时由`resolve_approval_and_commit_action`在同一savepoint重新派生usable proof并驱动`pending→approved`；`invalidate_and_optionally_replace`要求expected head为request或approved resolution，replacement时`replacement_request_ref`/`predecessor_ref`链式精确。每成功head变化同事务写immutable record(s)、唯一current-head CAS、恰好一条`approval.state_changed`（payload按`change_kind`四值真值表从提交事实投影）与对应`approval.requested|resolved|invalidated` Audit；CAS冲突/replay/validation失败不消费allocation不产Event。每个顶层owner使用唯一transaction-bound typed UUID collector并传入nested阶段。远程签名绑定与时间纪律已校验，但无可信密码学verifier时不得授权Action，返回`approval_required`并回滚。
 3. **Identity repository**（`identity.rs`）：credential `register`（revision=1 起）/`rotate(expected_revision)`（CAS 标记旧 revision replaced + 新 revision active）/`revoke(expected_revision)`；challenge `issue`/`get`（get 绝不因时间经过写状态）/`consume`/`revoke`（终态不可逆）/`expire_challenge_with_expected_state`（仅接受 issued，`expires_at<=expired_at`，同事务写唯一 `identity.challenge_expired` Audit，绝不产 Approval event；expire audit 的 actor 为 null 时 entry_point 必须 `system_internal`）；local/system evidence `insert_*`/`get_*` immutable canonical。
 4. **事件/审计正交**：Challenge expiry 只写 `identity.challenge_expired` Audit；Approval 业务写 `approval.requested|resolved|invalidated` Audit 与唯一 `approval.state_changed` Event，两者不得混用。
 

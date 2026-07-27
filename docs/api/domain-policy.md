@@ -32,7 +32,7 @@ match result {
 
 `PolicyEvaluationContext` 只接收 Kernel 已观察或已有事实：Actor、当前 EntryPoint、多条 ContentOrigin、Task/Action ID、plan version、URI resource refs、capability/operation、SideEffectClass、structured arguments、Delegation 覆盖 evidence、本地 presence evidence、UTC instant、security mode 上下文与 `KernelInvariantState`。
 
-`owner`、本机入口、security mode、S4/S5均不产生默认权限或默认确认。PermissionDecision v2适配Default Allow：无规则命中仍生成allow decision，但不创建Approval。Child Task Action的context必须加入父子scope/capability/delegation delta；当前`PolicyEvaluationContext`尚无该v2持久shape，属于待升级接口。
+`evaluate_policy`直接接收`&[PolicyRuleV2]`；`PermissionDecisionDraft.decision`直接是`PermissionDecisionV2Decision`，`RequiresConfirmation`携带`ConfirmationModeV1`。`owner`、本机入口、security mode、S4/S5均不产生默认权限或默认确认。无规则命中仍生成allow decision，但不创建Approval。Child Task Action的context必须加入父子scope/capability/delegation delta；当前`PolicyEvaluationContext`尚无该v2持久shape，属于待升级接口。
 
 ## SubjectProjection pure API
 
@@ -111,7 +111,7 @@ fn check(
 - specificity 只使用本次实际命中的最具体备选；exclude 不加分。
 - 最终顺序：priority、specificity tuple、deny > confirm > allow、revision、ID UTF-8 升序。
 
-## Condition v1
+## PolicyRuleV2 Condition
 
 - `time_window`：IANA timezone、weekday、本地半开区间、跨午夜、start=end 全天；UTC instant 经 chrono-tz 投影，DST 不猜偏移。
 - `delegation_required` / `local_presence_required`：true 与 false 都是精确条件。
@@ -132,7 +132,7 @@ fn check(
 
 ## Decision draft 与哈希边界
 
-`PermissionDecisionDraft`是当前legacy纯领域输出，不是持久v2对象，不包含：
+`PermissionDecisionDraft`是v2 matcher的非持久纯领域输出，不是完整持久对象；其`decision`已直接使用`PermissionDecisionV2Decision`，但仍不包含：
 
 - PermissionDecision ID；
 - `evaluated_at`；
@@ -144,7 +144,9 @@ fn check(
 
 crate使用`kernel-contracts::sha256_canonical`计算structured arguments的`key_params_hash`并规范化resource refs。**不得**把当前`CanonicalEvaluationInput`或旧`evaluation_context_hash`冒充v2 PermissionDecision。
 
-切片4b：`kernel-sqlite` 评估编排消费本 crate 的 `evaluate_policy` / `RateLimitPort` / `resource_refs_within_task_scope`，并把结果落成完整 `PermissionDecisionV2`（ID/revision/time/policy_set_revision + `kernel-authorization` material/observation 双指纹）。matcher 仍不持久化；PolicyRule 存储使用 `PolicyRuleV2`，评估前由 sqlite 转换为 matcher 的 v1 `PolicyRule` 表面（`remote_signature` 不进 v1 matcher，fail closed 不生效直到 matcher 升级 v2）。
+`kernel-sqlite`评估编排消费本crate的`evaluate_policy` / `RateLimitPort` / `resource_refs_within_task_scope`，并把结果落成完整`PermissionDecisionV2`（ID/revision/time/policy_set_revision + `kernel-authorization` material/observation双指纹）。matcher仍不持久化；enabled `PolicyRuleV2` heads由SQLite直接传入，不存在v2→v1转换、Generic probe、remote rule-ID side table或mode/decision adapter。
+
+五种`ConfirmationModeV1`均走同一候选与排序链：`remote_signature`正常产生`PermissionDecisionV2Decision::RequireRemoteSignature`，参与priority、specificity、winner-only rate-limit和耗尽后fallback。Approval/Identity repository与Provider真实验签是否可执行是后续事实门，不得改变matcher结果。未投产旧PolicyRule/PermissionDecision/ApprovalRecord合同已按ADR-0010直接退役；`V1`后缀本身不表示legacy，`ConfirmationModeV1`等首次正式合同继续active。
 
 ## 内部匹配 outcome（非公开 API）
 

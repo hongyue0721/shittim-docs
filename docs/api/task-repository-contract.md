@@ -1,6 +1,6 @@
 # Task创建、Child materialization 与 repository 硬合同
 
-> 状态徽章：**partial**（首批 12 Schema + `kernel-task-creation` pure library + official fixtures/harness，切片1b Action/child 授权 Schema + `kernel-authorization` pure crate，切片2 `kernel-sqlite` **active root TaskCreate v2 repository**（migration 0004），切片3a/3b bindings+kcp runtime，切片3c v1 write 删除/Outbox v2-only/旧库拒绝 **已实现**；child materializer / Action·PD·Approval repositories **未实现**）
+> 状态徽章：**partial**（首批 12 Schema + `kernel-task-creation` pure library + official fixtures/harness，切片1b Action/child 授权 Schema + `kernel-authorization` pure crate，切片2 root repository、切片3a–3c active v2 runtime/v1 write 删除、切片4a–4c Action/Policy/PermissionDecision/Approval/Identity repositories 与授权编排 **已实现**；Lease/Stop Fence 与 child materializer **未实现**）
 
 ## 唯一事实源
 
@@ -22,7 +22,7 @@
 
 - active `task.create` = v2 root-only；**repository 已实现**（`WriteTransaction::create_root_task_v2`）；**KCP method-aware preflight / handler / adapter 已接**（切片3b → `create_root_task_v2`）；
 - v1 仅 Schema/fixture 历史验证，production 请求得 `unsupported_schema_version`；v1 repository write **已删除**（切片3c），不是持续维护路径；
-- child 唯一新写入口为 `kernel.task/task.child.create`（materializer 未实现）；Action / Approval repositories 未实现；
+- child 唯一新写入口为 `kernel.task/task.child.create`（materializer 未实现）；Action / Policy / PermissionDecision / Approval / Identity repositories 已实现，但 Lease/Stop Fence 尚未落地；
 - 不支持 v1 业务数据迁移；旧开发库 `reinitialize-required`（切片3c 已落地）；Outbox production API 为 v2-only；
 - production bindings + v2 dispatcher + v2 repository 是 `V2InitialBuildActive` 初始交付，不是 cutover。
 

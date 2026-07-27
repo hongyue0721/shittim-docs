@@ -1,6 +1,6 @@
 # Approval v2 与 PermissionDecision 授权合同
 
-> 状态徽章：**partial**（Schema、Approval current-head CAS 三方法与 approval.state_changed producer、Identity credential/challenge/evidence repositories 已实现；真实远程验签属 Provider 边界未实现；唯一事实源为 [`IMPLEMENTATION_CONTRACTS.md`](../../specs/IMPLEMENTATION_CONTRACTS.md) §6.10 与 [ADR-0007](../../adr/0007-approval-v2不可变联合身份与失效.md)）
+> 状态徽章：**partial**（Schema、Approval 三种 current-head mutation 的命名 owner、Policy evaluation + initial request 复合入口、resolution + Action 复合入口、`approval.state_changed` producer、Identity credential/challenge/evidence repositories 与顶层命令 UUID 用途闭集已实现；invalidation/replacement 的 Action/Lease 关联撤销和真实远程验签仍未实现；唯一事实源为 [`IMPLEMENTATION_CONTRACTS.md`](../../specs/IMPLEMENTATION_CONTRACTS.md) §6.10 与 [ADR-0007](../../adr/0007-approval-v2不可变联合身份与失效.md)）
 
 ## 唯一事实源
 
@@ -15,6 +15,13 @@
 | 决策背景与边界 | [ADR-0007](../../adr/0007-approval-v2不可变联合身份与失效.md) |
 | 无迁移决策 | [ADR-0009](../../adr/0009-v2从零构建并取消v1数据迁移.md) |
 | 域状态 | [`../IMPLEMENTATION_MATRIX.md`](../IMPLEMENTATION_MATRIX.md) · [`../PROGRESS.md`](../PROGRESS.md) |
+
+## 当前 repository 闭合状态
+
+- `evaluate_action_permission_and_create_approval` 在一个 savepoint 内完成 Policy evaluation、PD/Action current binding 与初始 operation Approval request/head/Audit/Event；caller 只能提供非派生 request facts。
+- `resolve_approval_and_commit_action` 在一个 savepoint 内解析 current request、验证 mode evidence/Challenge、提交 resolution/head/Audit/Event、重新派生 usable proof，并驱动 `pending→approved`；Remote 无可信 verifier 时返回 `ApprovalRequired` 且整事务回滚。
+- 每个顶层 evaluate/create/resolve/resolve-and-commit/invalidate 命令只创建一个 transaction-bound typed UUID collector；command allocations 与该路径实际读取、验证或消费的 persisted Task/Scope/Action/current PD/PolicyRule/request/challenge/evidence/credential 在 matcher、consume 或任何写入前进入同一用途闭集。嵌套 prepare/apply 只能借用该 collector，不能各自验证局部集合。
+- 单独 `resolve` / `invalidate_and_optionally_replace` 尚未闭合 Action/Lease 关联撤销；真实 remote signature 验签尚未实现。因此整体仍是 `partial`，不得称 4c 完成。
 
 ## 已实现的1c-i表面
 

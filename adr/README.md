@@ -16,9 +16,10 @@ ADR 记录规范允许范围内的已接受实施选择，不取代领域规范�
 - [ADR-0004：Kernel SQLite 文件持久化基座](0004-kernel-sqlite文件持久化基座.md) — accepted
 - [ADR-0005：Computer Use 可选 Profile 边界](0005-computer-use可选profile边界.md) — accepted
 - [ADR-0006：Child Task 权威与 TaskCreate v2 迁移](0006-child-task权威与taskcreate-v2迁移.md) — accepted；**partial**（见 MATRIX/PROGRESS）；**部分被 ADR-0009 supersede**（§7 migration/provenance、cutover 启用叙述、验收第 6 条）
-- [ADR-0007：Approval v2 不可变联合、身份与失效](0007-approval-v2不可变联合身份与失效.md) — accepted；**contract-only**；**部分被 ADR-0009 supersede**（v1 migration 生产要求）
+- [ADR-0007：Approval v2 不可变联合、身份与失效](0007-approval-v2不可变联合身份与失效.md) — accepted；**partial**（Approval/Identity repository已落地，真实远程验签与child materializer未完成）；**部分被 ADR-0009 supersede**（v1 migration 生产要求）
 - [ADR-0008：Active Event v2 Schema 与版本化统一 Outbox](0008-active-event-v2与版本化统一outbox.md) — accepted；**partial**（见 MATRIX/PROGRESS）；**部分被 ADR-0009 supersede**（§7 mixed transform 生产目的、§8 legacy Outbox production API）
 - [ADR-0009：v2 从零构建并取消 v1 数据迁移](0009-v2从零构建并取消v1数据迁移.md) — accepted；**partial**（见 MATRIX/PROGRESS）；作废 `V2ProductionWriteCutover`，建立 `V2InitialBuildActive`
+- [ADR-0010：Policy v2 终态与未投产旧合同直接退役](0010-policy-v2终态与未投产旧合同退役.md) — accepted；**implemented**；当前 Schema 基线 `80 = 38 retained + 42 component-native`
 
 ## 规则
 

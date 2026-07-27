@@ -1,6 +1,6 @@
 # Shittim 实现进度
 
-> 状态日期：2026-07-21（`V2InitialBuildActive`切片4c完成：migration 0008 + Approval v2 current-head CAS 三方法与 approval.state_changed producer + Identity credential/challenge/evidence repositories。§13.7 未闭合——child materializer 与五方法 handler 仍缺。）
+> 状态日期：2026-07-27（`V2InitialBuildActive`：Policy v2 终态 + Action/PermissionDecision 原子绑定（migration 0009）+ Action 唯一状态事件权威 + post-Outbox 全量回滚证明 + Approval 操作授权闭合 + Challenge 过期与身份审计 + Approval 解析证据闭环 + 顶层命令 UUID 用途闭集已落地。切片 4c 原 11 项 High 已闭合 9 项，剩 Lease 关联撤销与真实远程验签 2 项；Lease/Stop Fence 完全缺失；§13.7 未闭合——child materializer 与五方法 handler 仍缺。）
 >
 > **新设备接力开发请先读 [`DEVELOPMENT_HANDOVER.md`](DEVELOPMENT_HANDOVER.md)**（环境准备、标准流程、切片 5/6 精确任务、验收债务与已知问题）。
 
@@ -41,32 +41,37 @@
 | 3c | 删除 v1 runtime 写路径 + Outbox v2-only + 旧库 reinitialize-required + migration 0005 | **已完成** |
 | 4a | Action 持久化 + ActionTransitionIntent + `action.state_changed` producer | **已完成** |
 | 4b | PolicyRule + PermissionDecision repositories + Action 评估编排（Approval 属 4c） | **已完成** |
-| 4c | Approval / Identity repository | **已完成** |
+| 4c | Approval / Identity repository 与安全闭环 | **部分完成（9/11 High）** |
 | 5 | child Action materializer | 未开始 |
 | 6 | §13.7 谓词闭合（依赖 4–5 + 其余 active producers） | 未开始 |
 
 **已实现（代码/Schema 事实）**
 
 - 规范与工程基线：Freedom-first / Kernel Owns Reality 合同、Apache-2.0、双仓同步 library/CLI、Node/pnpm 零依赖根基座（exact Node 24.18.0 / pnpm 11.3.0）、统一门 `scripts/check-schema.sh`。
-- Schema/Rust 契约：Rust workspace、Draft 2020-12 + manifest v2（production=83 entries，41 retained + 42 component-native）、`schema-tool` 单 root transaction / target-scoped IR / TaggedUnion / string enum `ALL` / string-array const / RFC 8785；production `METHOD_VERSION_BINDINGS` 为 IC §13.5 八方法集（切片3a）。
-- 纯领域：`domain-task`（Task/Action 状态图、revision/plan_version）、`domain-policy`（URI/glob/Default Allow/rate-limit draft，Stop Fence/Recovery 独立 Blocked）。
-- 持久化：`kernel-sqlite` migration 0001–0007；AuditRecord **v2**；strict Task/TaskScope/ContentOrigin(v2) 读；版本化 **v2-only** Outbox + 严格 stored decoder + savepoint poison；**active root TaskCreate v2 repository**（`create_root_task_v2`）；**Action current-snapshot + ActionTransitionIntent + `action.state_changed` producer**（切片4a）；**PolicyRuleV2 + PermissionDecisionV2 + `evaluate_action_permission`**（切片4b）；legacy TaskCreate/Audit/Outbox v1 write 已删；旧库 open `reinitialize-required`。
+- Schema/Rust 契约：Rust workspace、Draft 2020-12 + manifest v2（production=`80 = 38 retained + 42 component-native`）、`schema-tool` 单 root transaction / target-scoped IR / TaggedUnion / string enum `ALL` / string-array const / RFC 8785；production `METHOD_VERSION_BINDINGS` 为 IC §13.5 八方法集。ADR-0010已直接退役未投产旧PolicyRule/PermissionDecision/ApprovalRecord三合同，无migration/compat/旧validation入口；`V1`后缀本身不等于legacy。
+- 纯领域：`domain-task`（Task/Action 状态图、revision/plan_version）、`domain-policy`（直接消费`PolicyRuleV2`、URI/glob/Default Allow/五种confirmation mode/winner-only rate-limit，Stop Fence/Recovery独立Blocked）。
+- 持久化：`kernel-sqlite` migration 0001–0009；AuditRecord **v2**；strict Task/TaskScope/ContentOrigin(v2)读；版本化 **v2-only** Outbox + 严格stored decoder + savepoint poison；active root TaskCreate v2 repository；Action current-snapshot/transition/`action.state_changed`；PolicyRuleV2/PermissionDecisionV2/评估编排；Approval current-head CAS/`approval.state_changed`/Identity repositories；legacy TaskCreate/Audit/Outbox v1 write已删；旧库open `reinitialize-required`。
+- migration 0009 `action_permission_decision_heads`：每个 Action 当前 PermissionDecision 的唯一持久权威，配 CAS/绑定守卫/禁删触发器；评估经受事务生命周期约束的 Staged→Bound 协议绑定，确认路径保持 pending，放行与拒绝在同一次状态 CAS 内投影 `permission_decision_ref`，一次评估只推进一次 Action revision。
 - KCP 库级：`kernel-kcp` method-aware Value preflight、三方法 registration/dispatcher/handler（`system.ping` / **active root `task.create` v2** / `task.get`）与 SQLite adapter→`create_root_task_v2`；不可连接，无 bytes/frame/server。
 - ADR-0006 首批：12 business-v2 Schema + `kernel-task-creation` pure library + official fixtures/harness + schema-tool strict pointer CLI。
 - ADR-0008 前两段：Event v2 八 Schema、`EventTypeBinding`/active·legacy catalog、typed EventEnvelope v1/v2、migration 0003 descriptor v1 与统一 Outbox shape（切片3c 起 production v2-only）。
-- V2InitialBuildActive切片1a–1c-ii：root 持久对象、Action/child 授权、授权核心、身份/挑战/证据 Schema 与 pure crate 已落地（manifest=83）。
+- V2InitialBuildActive切片1a–1c-ii：root持久对象、Action/child授权、授权核心、身份/挑战/证据Schema与pure crate已落地；该阶段历史快照为manifest=83，ADR-0010退役三项旧Policy合同后当前为80。
 - V2InitialBuildActive切片2：migration 0004（`content_origins_v2`、`task_creation_provenances`、`audit_records_v2`、`root_task_create_idempotency_v2` + tasks/scope FK 重建以允许 v2 origin）；`WriteTransaction::create_root_task_v2` 单事务写 Origin/Scope/Task/Provenance/Audit/idempotency/Event；全闭包 canonical readback（Created/Replayed 共用）；幂等重放/冲突；回滚不占号；与 v1 表互不污染。
 - V2InitialBuildActive切片3a：production `method_version_bindings` 精确八方法（`task.create` active=[2]/legacy=[1]，其余 active=[1]）；`validate_production_manifest_stage` 要求 Envelope-derived 完整集 + IC §13.5 lifecycle；generated `METHOD_VERSION_BINDINGS` 非空且 `select_request_version` 可用。
 - V2InitialBuildActive切片3b：kernel-kcp preflight 按 (family, method, payload.schema_version) 调 `select_request_version`；V2 Envelope 结构验证 + active payload Schema；`task.create` v2 Accepted/Registered，v1 → `unsupported_schema_version`；handler 七 UUID（含 CreationProvenance）+ root-only 检查 + `TaskCreateResponseV2`；adapter 映射 `create_root_task_v2`；删除 kcp 侧 v1 create handler/adapter/ports 路径。
 - V2InitialBuildActive切片3c：删除 `create_task`/`TaskCreateCommand`/`prepare_legacy_v1_create`、AuditRecord v1 write、`append_legacy_event_v1`/`PendingLegacyEventV1`/`StoredEventEnvelope::LegacyV1`；Outbox decoder 对 schema_version=1 → `stored_data_invalid`；`SqliteStore::open` 后 `reject_legacy_v1_business_data`；migration 0003 transform 对非空 legacy Outbox 直接 reinitialize-required；migration 0005 在空表前提下 drop dead v1 表。
-- V2InitialBuildActive切片4a：migration 0006（`actions` + `action_transition_intents`）；`insert_pending_action` / `get_action`（公开）；intent 五方法 + `mark_committed_with_event` 同事务 CAS+`action.state_changed`（causation=`action_transition`）+ reconcile 三态；状态事件唯一权威为 mark，crate-private CAS transition 不写 Outbox；需 lease effects 的边 fail closed；domain-task 边合法性与 evidence 门；sequence/position 失败不占号。
+- V2InitialBuildActive切片4a：migration 0006（`actions` + `action_transition_intents`）；`insert_pending_action` / `get_action`（公开）；intent durable/recovery surface + crate-internal mechanical commit 同事务 CAS+`action.state_changed`（causation=`action_transition`）+ reconcile 三态；状态事件由命名业务 owner 进入唯一机械权威，无公开裸状态迁移入口；需 lease effects 的边 fail closed；domain-task 边合法性与 evidence 门；sequence/position 失败不占号。
 - V2InitialBuildActive切片4b：migration 0007（`policy_set_metadata` bootstrap revision 0、`policy_rules`、`permission_decisions`）；PolicyRule append-only revision + global set counter；PD immutable append（连续 decision_revision）+ Action ref 双向校验；`evaluate_action_permission` 单事务 matcher→指纹→PD→`permission.evaluated` Audit→Action CAS（allow/deny/require_* deferred，无 Approval 创建）；rate-limit 同事务消费与回滚；material/observation 双指纹真实重算。
-- V2InitialBuildActive切片4c：migration 0008（`approval_records`、`approval_chain_heads`、`identity_credentials`、`identity_challenges`、`identity_evidence`）；Approval 三复合 CAS 方法 `append_request`/`resolve`/`invalidate_and_optionally_replace`（expected head CAS、canonical subject 相等、replacement 原子推进、change_kind 真值表投影）；每成功 head 变化恰好一条 `approval.state_changed` + 对应 `approval.requested|resolved|invalidated` Audit；CAS 冲突/replay 不产 Event；Identity credential register/rotate/revoke、challenge issue/consume/expire（终态不可逆、expire 只写 `identity.challenge_expired` Audit 不发 Approval event）、local/system evidence immutable。
+- V2InitialBuildActive切片4c：migration 0008（`approval_records`、`approval_chain_heads`、`identity_credentials`、`identity_challenges`、`identity_evidence`）；三种 Approval head mutation 由命名 owner 独占：初始 operation request 只经 `evaluate_action_permission_and_create_approval` 与 Policy evaluation/PD/Action binding 同一 savepoint 创建，无 generic 独立 `append_request`；`resolve` 处理 expected-head/mode evidence，`resolve_approval_and_commit_action` 可在同一 savepoint 重新派生 usable proof 并驱动 `pending→approved`；`invalidate_and_optionally_replace` 原子推进 replacement。每成功 head 变化恰好一条 `approval.state_changed` + 对应 `approval.requested|resolved|invalidated` Audit；CAS 冲突/replay 不产 Event；Identity credential register/rotate/revoke、challenge issue/consume/expire（终态不可逆、expire 只写 `identity.challenge_expired` Audit 不发 Approval event）、local/system evidence immutable。
 
 **未实现（不得宣称完成）**
 
-- child Action materializer；Approval/Identity repositories；Action 闭集其余写方法（lease/policy binding/child completion/recovery list）。
-- 其它 active business **producer**（child/approval）；**Publisher** 与 versioned KCP **poll** 明确不在本里程碑。
+- **Lease / Stop Fence 持久化完全不存在**：无 `acquire_lease` / `release_or_expire_lease`，无持久 Action Lease、Resource Lock 与 Stop Fence；`approved → leased → in_flight → completed` 合法链当前走不通。这是 child materializer 的硬前置。
+- **切片 4c 安全闭环接近完成，仍未最终验收**：原 11 项 High 已闭合 9 项。除既有 operation Approval 当前 PD 绑定、Challenge 过期 CAS/审计和 identity 审计外，本轮又闭合 5 项：每个顶层 Approval/Policy 复合命令用唯一 transaction-bound typed collector，在任何业务写入前覆盖 command allocations 与该路径实际读取、验证或消费的 persisted Task/Scope/Action/PD/PolicyRule/request/challenge/evidence/credential UUID 用途，嵌套 prepare/apply 禁止另建 collector；事件 payload 从权威原始 request 回读真实 confirmation mode；denied resolution 审计为 `outcome=blocked`、稳定 reason code 且保留 operation PD/policy context；local/system 证据校验 actor/entry/time/challenge/request/chain/task/subject/material 绑定；system/remote Challenge 消费与 Approval resolution/head/Event/Audit 通过 `consume_challenge_with_binding` 同一事务提交，过期返回 typed `ChallengeExpired` 而不写 resolution。
+- **仍未闭合的 4c High（2 项）**：单独调用 `resolve` / `invalidate_and_optionally_replace` 仍未完整更新 Action 关联并撤销受影响 Lease（撤销 Lease 必须等 Lease 持久化；`resolve_approval_and_commit_action` 已能基于重新派生 proof 同事务驱动 `pending→approved`）；`remote_signature` 尚无真实密码学验签。
+- **`remote_signature` 如实失败关闭**：远程 Challenge 的过期/消费与 resolution 已有原子事务闭包，但无密码学验签时，远程决议一律不得作为批准 Action 的授权（`ApprovalRequired`）；待可信 `RemoteSignatureVerifier`（首个实现为 Ed25519 RFC8032）落地后再开放。
+- child Action materializer；Action闭集其余写方法（lease acquire/dispatch/release、child completion、recovery list；policy binding 已实现）；真实远程验签 Provider 边界。
+- 其它 active business **producer**只缺child；approval producer已在4c落地。**Publisher** 与 versioned KCP **poll** 明确不在本里程碑。
 - 其余 Command 幂等/乐观锁；**五方法**正式 handler；Unix Domain Socket / Windows Named Pipe KCP **server/client**；**agentd**。
 - `ts/*` 包、SDK client、Pi `agent-runtime`；统一 **Extension SDK Base**；optional Computer Use Profile；Tauri 桌面客户端；Provider/Memory/Initiative/Broker。
 - `specs/CONFORMANCE.md` 全部 BASE 与声明的 Profile/Platform 条件套件。
@@ -84,10 +89,12 @@
 - [x] 切片 3c：删除 v1 写路径 + Outbox v2-only + 旧库拒绝 + migration 0005
 - [x] 切片 4a：Action 持久化 + ActionTransitionIntent + `action.state_changed` producer
 - [x] 切片 4b：PolicyRule + PermissionDecision repositories + Action 评估编排
-- [ ] 切片 4c：Approval/Identity repository
+- [~] 切片 4c：Approval/Identity repository（原 11 项 High 已闭合 9 项；剩 Lease 关联撤销与真实远程验签 2 项，不得称完成）
+- [x] 收尾：Approval 当前绑定 PD 门 / Action 唯一状态事件权威 / post-Outbox 全量回滚证明
+- [ ] Lease + Stop Fence 持久化（child materializer 硬前置）
 - [ ] 切片 5：child materializer
 - [ ] 切片 6：§13.7 谓词闭合（child/Action/PD/Approval + 其余 producers）
-- [ ] active Event business producers（child/approval；root 已在切片 2 接入；action 已在切片 4a 接入）
+- [ ] active Event business producer：child（root已在切片2接入，action已在4a接入，approval已在4c接入）
 - [ ] 五方法正式 handler；可连接 KCP server/client；`agentd`
 - [ ] 其它 Command 幂等与乐观锁；Task list cursor ADR 拍板后实现
 - [ ] Publisher + versioned KCP poll（**后续里程碑**，不在 V2InitialBuildActive）
@@ -97,7 +104,8 @@
 
 ## 当前阻塞
 
-- kcp runtime 与 sqlite repository 已切到 active create v2 / Outbox v2-only；Action/`action.state_changed`（4a）与 PD/PolicyRule/评估编排（4b）已落地；五方法无 handler，禁止启动 server。§13.7 仍缺 Approval/Identity/child 闭环。
+- kcp runtime与sqlite repository已切到active create v2 / Outbox v2-only；Action/`action.state_changed`（4a）、PD/PolicyRule/评估编排（4b）、Approval/Identity/`approval.state_changed`（4c 结构层）已落地；五方法无handler，禁止启动server。
+- §13.7 谓词 4 当前为 **false**：repository 表存在不等于持久化闭环。Approval 当前绑定 PD 门与 Identity 证据闭环已落地；剩余执行前置是 child materializer、真实远程验签以及 Lease/Stop Fence。
 - legacy v1 repository 的 Delegation 正向路径未实现（非 null 固定 not found）；active v2 repository 同样在 Delegation authority 未落地前 fail-closed 返回 `delegation_not_found`。
 - Task list cursor 编码须先 ADR/API 拍板。
 - Audit：`permission.evaluated` 已在评估编排同事务校验 policy_context 与 PD 字段相等；仍缺 rollback 权威投影、Provider/ModelCall 一致性与其它业务 producer。
@@ -107,14 +115,16 @@
 
 ## 下一步
 
-1. 切片 4c–5：Approval/Identity repositories 与 child materializer；接入 approval/child active Event producers。
-2. 切片 6：在 4c–5 完成后闭合 §13.7 全部谓词。
-3. **之后**再做 Publisher 与 versioned KCP poll；再实现剩余五个 Catalog handler 与可连接 server。
-4. 随后实现 Extension SDK Base 与 TypeScript/client。
+1. 按 [`docs/design/lease-stop-fence-blueprint.md`](design/lease-stop-fence-blueprint.md) 实现 Lease、Resource Lock 与 Stop Fence 持久化，打通 `approved → leased → in_flight → completed`，并让 Approval invalidation/replacement 同事务撤销受影响 Lease。
+2. 引入可信 `RemoteSignatureVerifier` 边界（首个实现为 Ed25519 RFC8032 pure mode），解除 `remote_signature` 的失败关闭并完成 4c 最终验收。
+3. 切片5：实现child materializer并接入child `task.created` producer。
+4. 切片6：在切片5完成后闭合§13.7全部谓词。
+5. **之后**再做 Publisher 与 versioned KCP poll；再实现剩余五个 Catalog handler 与可连接 server。
+6. 随后实现 Extension SDK Base 与 TypeScript/client。
 
 ## 最近验证
 
-本切片（V2InitialBuildActive 4b）验证命令：
+当前代码基线（含 Approval/Identity 与顶层 UUID 用途闭集）验证命令：
 
 ```text
 export PATH="$HOME/.local/share/pnpm:$PATH"

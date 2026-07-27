@@ -85,16 +85,18 @@ ADR 与 `docs/api/*` 页面**只允许**一枚状态徽章（如 `implemented` /
 
 主仓提供零依赖 Node 工具 `scripts/sync-docs-repository.mjs`，从**已推送**的主仓 `master` HEAD 导出文档闭集并同步纯文档镜像。工具**不**提交/推送主仓，**不**生成 `FILE_MANIFEST.md`，**不**使用 `gh` 或猜测认证；对于 push outcome unknown，会保留并在下轮严格恢复同一 staging commit，而不会自行改写或绕过未知远端。
 
-### 6.1 固定路径与远端
+### 6.1 远端与本地路径
 
-| 角色 | 本地路径 | remote | 分支 |
-|---|---|---|---|
-| 主仓（唯一权威） | `/mnt/data/companion_architecture_v3` | `https://github.com/hongyue0721/shittim.git` | `master` |
-| 文档 checkout | `/mnt/data/shittim-docs-export` | `https://github.com/hongyue0721/shittim-docs.git` | `master` |
+远端与提交身份是固定契约事实；本地路径是主机事实，由脚本所在仓库位置派生，可用环境变量覆盖，不再硬编码到代码。
 
-锁文件：`/mnt/data/shittim-docs-repository.sync.lock`（`O_EXCL` 独占；**不**自动清除 stale）。
+| 角色 | 本地路径（默认派生） | 覆盖环境变量 | remote（固定） | 分支 |
+|---|---|---|---|---|
+| 主仓（唯一权威） | 脚本所在仓库根 | `SHITTIM_SYNC_SOURCE_ROOT` | `https://github.com/hongyue0721/shittim.git` | `master` |
+| 文档 checkout | 主仓同级 `shittim-docs` 目录 | `SHITTIM_SYNC_DOCS_ROOT` | `https://github.com/hongyue0721/shittim-docs.git` | `master` |
 
-**双仓 sync 工具及其 Node 测试的临时目录合同（仅本工具链）**：`scripts/sync-docs-repository.mjs` 的 production `tempRoot`、文档同步测试根 `/mnt/data/shittim-docs-sync-tests`，以及 `update-file-manifest --self-test` 使用的 mode `0700` 根 `/mnt/data/shittim-file-manifest-tests`（mode `0600` 独占锁 `.self-test.lock`）均固定在 `/mnt/data` 下；每个 fixture 独立创建并在结束时递归清理，不读取 `os.tmpdir()`。该约束**只**约束上述双仓 sync / file-manifest Node 工具与其测试，**不得**被解读为“整个 workspace 禁止 `/tmp`”。
+锁文件与临时工作根：默认在文档 checkout 的父目录下（`shittim-docs-repository.sync.lock` / `shittim-docs-sync-work`），可用 `SHITTIM_SYNC_STATE_ROOT` 覆盖；锁为 `O_EXCL` 独占，**不**自动清除 stale。
+
+**双仓 sync 工具及其 Node 测试的临时目录合同（仅本工具链）**：文档同步测试根 `/mnt/data/shittim-docs-sync-tests` 与 `update-file-manifest --self-test` 使用的 mode `0700` 根 `/mnt/data/shittim-file-manifest-tests`（mode `0600` 独占锁 `.self-test.lock`）仍固定在 `/mnt/data` 下；每个 fixture 独立创建并在结束时递归清理，不读取 `os.tmpdir()`。该约束**只**约束上述工具测试，**不得**被解读为“整个 workspace 禁止 `/tmp`”。
 
 **本阶段仓库编译与测试运行时的主机约定（与上条不同层）**：当前维护者/Agent 在本主机跑编译或本阶段全量/focused 测试时，运行命令必须显式设置 `TMPDIR` 与（Rust 时）`CARGO_TARGET_DIR` 到 `/mnt/data` 下可写目录，例如：
 
@@ -116,7 +118,7 @@ pnpm run test:docs-repository    # node --test scripts/sync-docs-repository.test
 ```
 
 - `--check`：真正只读验收。主仓 clean 且 HEAD 实时等于远端 `master` 后，在 `tempRoot` 下创建 mode 0700 的临时 bare 对象仓，fetch 并审计文档远端 history/tree，再清理；不会对 production docs checkout 执行 init/config/fetch/hash-object/update-ref。若本地 checkout 已存在，仅执行 status/config/cat-file 类只读检查；不存在则报告 `missing`，不创建。
-- `--sync`：在同一 source 前置条件下规划并执行 bootstrap / 线性追加 / 同 tree 来源收据 / 幂等；普通 fast-forward push，禁止 force / force-with-lease。CLI 入口始终使用源码内固定 production contract；fixture 路径只通过 import 后的显式 module API 注入，环境变量不能覆盖 production 路径或 remote。
+- `--sync`：在同一 source 前置条件下规划并执行 bootstrap / 线性追加 / 同 tree 来源收据 / 幂等；普通 fast-forward push，禁止 force / force-with-lease。CLI 入口固定 production remote、branch、身份与提交消息合同；本地主仓、文档 checkout、锁和临时工作根按 §6.1 从仓库位置派生并允许三个 `SHITTIM_SYNC_*` 环境变量覆盖。测试 fixture 仍只通过 import 后的显式 module API 注入，环境变量不能覆盖 production remote 或其它固定合同事实。
 - `--self-test`：纯函数与合同冒烟；本地 bare-remote 集成覆盖见 `test:docs-repository`。CLI 必须恰好一个合法 flag，多余或未知参数均返回 `usage`。
 
 所有 Git 子进程都会清除可重定向仓库、对象库、index 与配置的环境变量（包括 `GIT_DIR`、`GIT_WORK_TREE`、`GIT_COMMON_DIR`、`GIT_INDEX_FILE`、`GIT_OBJECT_DIRECTORY`、alternates 和 `GIT_CONFIG*` 注入），同时保留 `GIT_ASKPASS`、`GIT_SSH_COMMAND` 等认证传输变量。

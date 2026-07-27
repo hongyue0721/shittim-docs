@@ -6,12 +6,12 @@
 
 - **主仓库**：<https://github.com/hongyue0721/shittim>（`master`）
 - **文档镜像仓库**：<https://github.com/hongyue0721/shittim-docs>
-- **当前 HEAD**：`da361420d62e637eaffde9da3603065f15d73c91`
-- **工作树**：干净（无未提交改动）
-- **里程碑 `V2InitialBuildActive`（ADR-0009）** 已完成切片：
-  0 规范手术；1a root v2 持久对象 Schema×4；1b Action/child Schema×5 + `kernel-authorization` 纯库；1c-i 授权核心五 Schema；1c-ii 身份/挑战/证据八 Schema；2 root TaskCreate v2 仓库/migration 0004；3a production MethodVersionBindings 八方法集；3b KCP 切 active v2 删 v1 路径；3c sqlite v1 写路径删除/v2-only Outbox/旧库 reinitialize-required 拒绝；4a Action 仓库+`action.state_changed`/migration 0006；4b PolicyRule+PermissionDecision 仓库+评估编排/migration 0007；4c Approval 三 CAS 方法+Identity 仓库/migration 0008。
-- **测试基线（主会话确认）**：`kernel-sqlite` 110、`kernel-authorization` 63、`domain-task` 45；全工作区测试绿；`./scripts/check-schema.sh` 全量门绿。
-- **Schema 数量**：`schemas/manifest.json` 共 83 个 Schema。
+- **本轮代码验收基线**：`de5a8da`（Approval 顶层命令 UUID 用途权威闭合）；继续开发时以已推送的 `origin/master` 为准，并要求工作树干净。
+- **同步状态**：主仓 push 与文档镜像 receipt 由 `scripts/sync-docs-repository.mjs` 校验；不得在文档中维护会随一次 push 立即失真的“领先提交数”。
+- **里程碑 `V2InitialBuildActive`（ADR-0009）** 已完成或部分完成切片：
+  0 规范手术；1a root v2 持久对象 Schema×4；1b Action/child Schema×5 + `kernel-authorization` 纯库；1c-i 授权核心五 Schema；1c-ii 身份/挑战/证据八 Schema；2 root TaskCreate v2 仓库/migration 0004；3a production MethodVersionBindings 八方法集；3b KCP 切 active v2 删 v1 路径；3c sqlite v1 写路径删除/v2-only Outbox/旧库 reinitialize-required 拒绝；4a Action 仓库+`action.state_changed`/migration 0006；4b PolicyRule+PermissionDecision 仓库+评估编排/migration 0007；4c Approval/Identity 结构与 9/11 High 已闭合（migration 0008），仍属部分完成。
+- **测试基线（主会话实测）**：`kernel-sqlite` 144；全工作区测试绿；`cargo clippy --workspace --all-targets -- -D warnings` 绿；`./scripts/check-schema.sh` 全量门绿。后续改动后以实际测试输出更新，不得预写猜测数量。
+- **Schema 数量**：当前`schemas/manifest.json`精确`80 = 38 retained + 42 component-native`；历史1c-ii快照曾为83/41。ADR-0010已直接退役三项未投产旧Policy合同。
 - **事实单一来源**：`docs/IMPLEMENTATION_MATRIX.md` 与 `docs/PROGRESS.md`，ADR/API 文档只保留状态徽章与锚点链接。
 
 ## 2. 新设备环境准备
@@ -32,11 +32,11 @@
 4. 首次验证命令（clone 后执行）：
 
    ```bash
-   git rev-parse HEAD            # 应为 da36142...
-   git status --short            # 应为空
+   git rev-parse HEAD            # clone时以当前远端HEAD为准
+   git status --short            # 新clone应为空；接续dirty任务时必须保留既有diff
    node scripts/check-node-toolchain.mjs
    cat schemas/manifest.json | python3 -c "import json,sys; print(len(json.load(sys.stdin)['schemas']))"
-   # 应输出 83
+   # 当前应输出 80
    ```
 
 5. 验收门前的特殊动作：
@@ -130,12 +130,13 @@
 
 ## 7. 验收债务（必须先补）
 
-切片 4b 与 4c 因子代理通道故障由主会话亲自实现并自验提交，但**缺少独立验收**。恢复后必须补做：
+切片 4b 与 4c 因子代理通道故障由主会话亲自实现并自验提交。当前状态：
 
-- **4b 复核**（提交 `e96ae7c`）：Terra 级复核，重点：评估编排的单事务性；material/observation 指纹写入；PermissionDecision 与 PolicyRule 的边界。
-- **4c 复核**（提交 `a72a757`）：Terra 级复核，重点：Approval 三 CAS 方法边界；证据校验面；Action revision bump 的因果一致性。
+- **4b/Policy v2**：已经独立复核并完成根因重构——`PolicyRuleV2` 直接匹配、五种 confirmation mode、remote_signature 正常参与排序、强制 TaskScope 包含、UUID 用途互异、PermissionDecision 原子绑定（migration 0009）。旧三合同已按 ADR-0010 退役。
+- **4c 复核结果（原提交 `a72a757`）：NO-GO，11 项 High；现已闭合 9 项，剩 2 项**。已闭合：operation Approval subject 由仓储基于当前绑定 PD 派生且单事务创建（`ef6967b`）；Challenge 过期 CAS/审计与 credential/evidence identity 审计（`6b30e40`）；真实 confirmation mode、denied 审计 `blocked`+PD/policy context、local/system 证据完整绑定、Challenge 消费与 resolution 原子事务（`8ec55ea`）；每个顶层 Approval/Policy 复合命令以唯一 transaction-bound typed collector，在任何写入前闭合 command allocations 与该命令实际读取、验证或消费的 persisted Task/Scope/Action/PD/PolicyRule/request/challenge/evidence/credential UUID 用途（`de5a8da`）。跨层 Challenge=ActionEvent、Task=ActionTransition、新 PD=Task/current PD、错误归属过期 Challenge、RFC3339 offset 与 Remote 无 verifier 全回滚均有回归。剩余：Approval invalidation/replacement 的 Lease 关联撤销（依赖 Lease 持久化）与真实 remote_signature 验签（当前保持 `ApprovalRequired` 失败关闭）。
+- **终验说明**：独立 Terra 已对 `de5a8da` 给出正式 **GO（0 Critical / 0 High / 0 Medium / 0 Low）**，逐入口复核唯一 transaction-bound typed UUID collector 的创建、借用、用途登记与 first-write 顺序，并独立运行 `kernel-sqlite` 144/144 与 clippy 全绿；主会话另完成 workspace fmt/clippy/tests 与 `check-schema.sh` 全量门禁。
 
-复核通过后再继续切片 5，避免在未经验证的 4b/4c 基础上叠加物化逻辑。
+**路线依赖警告**：4c 中「resolve/invalidate 必须撤销 Action Lease」在 Lease 持久化不存在时无法真正关闭。因此顺序为：4c 非 Lease 修复 → Lease/Stop Fence → 4c Lease 关联复核 → child materializer → §13.7/handlers。不得在未清零 4c 的基础上叠加物化逻辑。
 
 ## 8. 已知问题
 
