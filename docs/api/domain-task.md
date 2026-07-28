@@ -92,9 +92,11 @@ let out = apply_policy_evaluation_outcome(
   - `None` = 原始 Action（可进入 rolling_back / rolled_back / rollback_failed）；
   - `Some(非空且 ≠ action_id)` = 补偿 Action（普通链至 completed|failed|unknown）；
 - `in_flight -> unknown` 需要 `uncertain_outcome_reason`；
-- `target Failed` 需要验证摘要（`verified_failed`，或 `inconclusive` 且 `side_effect_confirmed=Some(false)`）。
+- `target Failed` 需要验证摘要（`verified_failed`，或 `inconclusive` 且 `side_effect_confirmed=Some(false)`）；
+- Lease 在 `leased | in_flight` 两个状态持续存在。所有离开 Lease-bearing 状态的六条边都会产生 `LeaseReleaseEffect`：`leased -> approved | cancelled | unknown_side_effect` 与 `in_flight -> completed | failed | unknown_side_effect`；`leased -> in_flight` 不释放；
+- `LeaseReleaseEffect.reason` 是封闭的 `LeaseReleaseReason` 枚举，不是自由字符串。持久层必须消费 typed effect，不得重新解析 transition reason 猜测释放语义。
 
-**每次成功领域更新**（含 confirm）`revision + 1`；confirm 仅 status 不变且无 status event intent。
+**每次成功领域更新**（含 confirm）`revision + 1`；confirm 仅 status 不变且无 status event intent。领域层只声明原子 Lease/锁效果；当前 SQLite owner 尚未落地，因此 repository 仍对这些效果失败关闭。
 
 ### Recovery / Compensation
 

@@ -13,7 +13,7 @@
 - [Schema 生成与契约类型](schema-generation.md)
 - [domain-task 内部 Rust API](domain-task.md)（非 KCP 外部 API）
 - [domain-policy 内部 Rust API](domain-policy.md)（非 KCP 外部 API）
-- [kernel-sqlite 内部 Rust API](kernel-sqlite.md)（migration 0001–0009、AuditRecord v2、v2-only Outbox、rate limit、root/Action/Policy/PD/Approval/Identity repositories；非KCP外部API）
+- [kernel-sqlite 内部 Rust API](kernel-sqlite.md)（migration 0001–0010，0010 为 Lease/Lock/Fence 持久化基座但 owner 未实现；非KCP外部API）
 - [KCP Value preflight 与注册式 dispatcher](kcp-preflight-dispatcher.md)（已实现、不可连接、非 SDK）
 - [kernel-kcp typed application handler](kernel-kcp.md)（`system.ping`、`task.create`、`task.get`；不可连接、非 SDK）
 - [Task创建、Child materialization与repository硬合同](task-repository-contract.md)（root/Action/PD/Approval基础已落地；child materializer未完成；无v1数据迁移）
@@ -36,6 +36,6 @@ Core API 不预留 `snapshot`、`user_takeover` 或其他 Computer Use 专用方
 
 KCP Envelope 使用 `protocol_version`；payload、Event payload 和持久对象使用 `schema_version`。第一版 KCP protocol 为 `1.0`。正式 Schema 使用 JSON Schema 2020-12，并通过 RFC 8785 canonical JSON 支撑稳定哈希与幂等等价比较。
 
-`domain-task`只产出领域转换结果与事件意图；`domain-policy`直接消费`PolicyRuleV2`并产出非持久v2 decision draft/canonical input，以及纯TaskScope containment。`kernel-sqlite`拥有migration 0001–0009、AuditRecord v2、v2-only Outbox、事务绑定rate-limit和root/Action/Policy/PD/Approval/Identity repositories。`kernel-kcp`是不可连接的method-aware Value preflight、registration/dispatcher、三个handler与SQLite adapter；child materializer、`V2InitialBuildActive`全谓词、server与SDK/client仍未完成。Task list/update仍未实现。
+`domain-task`只产出领域转换结果与事件意图；`domain-policy`直接消费`PolicyRuleV2`并产出非持久v2 decision draft/canonical input，以及纯TaskScope containment。`kernel-sqlite`拥有migration 0001–0010；0010 已建立 Lease/Resource Lock/Stop Fence 持久化基座与提交前关系闭包，但命名 owner 尚未实现。`kernel-kcp`是不可连接的method-aware Value preflight、registration/dispatcher、三个handler与SQLite adapter；child materializer、`V2InitialBuildActive`全谓词、server与SDK/client仍未完成。Task list/update仍未实现。
 
 这些当前实现和计数均属于 Core；没有 Computer Use 预埋 API、Schema 或实现状态。

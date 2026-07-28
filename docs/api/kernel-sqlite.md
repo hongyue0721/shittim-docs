@@ -1,6 +1,6 @@
 # kernel-sqlite 内部 Rust API
 
-`rust/crates/kernel-sqlite`是文件型SQLite持久化crate，不是KCP或外部SDK API。当前实现 migration 0001–0009、AuditRecord **v2**、版本化 **v2-only** Event Outbox、transaction-bound rate limit、strict Task/TaskScope/ContentOrigin(v2) 读路径、**active root TaskCreate v2** repository、切片4a **Action current-snapshot / ActionTransitionIntent / `action.state_changed` producer**、切片4b **PolicyRuleV2 / PermissionDecisionV2 repositories + `evaluate_action_permission` 评估编排**，以及切片4c **Approval 三种 current-head mutation 的命名 owner + `approval.state_changed` producer + Identity credential/challenge/evidence repositories**。Legacy TaskCreate v1 write、AuditRecord v1 write、`append_legacy_event_v1` / `PendingLegacyEventV1` / `StoredEventEnvelope::LegacyV1` 已按 ADR-0009（切片3c）删除。child materializer仍不存在；不包含KCP handler、Publisher或versioned KCP poll；真实远程验签属 Provider 边界未实现。
+`rust/crates/kernel-sqlite`是文件型SQLite持久化crate，不是KCP或外部SDK API。当前实现 migration 0001–0010；其中 0010 已建立 Action Lease、Resource Lock 与 Stop Fence 的持久化基座、关系守卫及统一 COMMIT 前闭包，但 acquire/dispatch/release/Stop 命名 owner 尚未实现。
 
 ## 打开与migration
 
@@ -18,7 +18,8 @@ let store = SqliteStore::open("/var/lib/shittim/kernel.sqlite3", config)?;
 - 0005 exact identity：version `5`、name `drop_v1_business_tables`、唯一asset `rust/crates/kernel-sqlite/migrations/0005_drop_v1_business_tables.sql`、transform三元组`shittim.kernel-sqlite.ddl-only-v1` / `1` / `kernel_sqlite::migration::drop_v1_business_tables_ddl_only_v1`；phase set=`schema`。在空表前提下 drop `content_origins`(+parent_refs)、`audit_records`、`task_create_idempotency`；非空拒绝。
 - 0006 exact identity：version `6`、name `action_and_transition`、唯一asset `rust/crates/kernel-sqlite/migrations/0006_action_and_transition.sql`、transform三元组`shittim.kernel-sqlite.ddl-only-v1` / `1` / `kernel_sqlite::migration::action_and_transition_ddl_only_v1`；phase set=`schema`。创建 `actions` 与 `action_transition_intents`（canonical `record_json` + 投影列 + 双唯一键 + `committed_event_id`）。
 - 0007 exact identity：version `7`、name `policy_and_permission_decision`、唯一asset `rust/crates/kernel-sqlite/migrations/0007_policy_and_permission_decision.sql`、transform三元组`shittim.kernel-sqlite.ddl-only-v1` / `1` / `kernel_sqlite::migration::policy_and_permission_decision_ddl_only_v1`；phase set=`schema`。创建 `policy_set_metadata`（bootstrap revision 0）、`policy_rules`、`permission_decisions`。
-- descriptor format v1是UTF-8、LF、无BOM、末尾单LF的JCS对象；asset SHA覆盖原始bytes，descriptor SHA同时写入`checksum`与`descriptor_hash`，`descriptor_format_version=1`。
+- 0010 exact identity：version `10`、name `action_lease_stop_fence`、唯一 asset `rust/crates/kernel-sqlite/migrations/0010_action_lease_stop_fence.sql`，phase set=`schema|guards`。创建 `action_leases`、`action_resource_locks`、`stop_fence`；schema 与 guards 之间以 Rust 校验既有 Action，发现内联 Lease、`leased|in_flight` 或非零 execution generation 即 `reinitialize-required`；目标对象名碰撞同样拒绝而不接管。
+- 0010 将 ActionRequestV2 `lease.max_uses` 收敛为 Schema integer const `1` 并同步生成类型。SQL 只验证 Stop Actor 结构；未来 Stop owner 必须用 Rust Schema/typed decode/RFC 8785 JCS 在写入与 readback 两端证明 canonical bytes。
 - ledger shape严格识别：descriptor两列必须同时存在或同时不存在；半shape、半填row、未知format/identity、hash drift均`migration_drift`。数据库version高于binary优先`database_schema_too_new`。
 - 每个pending migration先`BEGIN IMMEDIATE`，锁后重新验证ledger，再执行DDL/transform/ledger insert；任一步失败整体rollback。rollback失败不会被忽略。
 - **open 后** `reject_legacy_v1_business_data`：若仍存在 `outbox.schema_version=1` 行，或 `content_origins` / `audit_records` / `task_create_idempotency` 非空（表尚在时），返回稳定 `StoreErrorCode::StoredDataInvalid`，message 含 `reinitialize-required:` 前缀。禁止自动清库/隐式升级。
@@ -34,6 +35,7 @@ store.with_write_transaction(|transaction| {
 ```
 
 - public业务写统一使用`BEGIN IMMEDIATE`；closure成功后只有`COMMIT`成功才返回业务结果。
+- 每个成功业务 closure 在真实 `COMMIT` 前经过统一 Lease/Stop relation closure：无 Lease/Lock/Fence/leased/in_flight 执行事实时走索引友好快路径；存在事实时严格核验 Action 内联 Lease↔`action_leases`逐字段一致、`resource_refs`↔锁表双向精确集合、Stop Fence 下副作用 Lease 已收敛及外键闭包。半 stage、半 delete、Fence 半收敛或锁集合缺失/多余全部回滚。
 - panic/error回滚；outer rollback失败将store标记unhealthy，后续fail closed。
 - Outbox append 使用唯一 transaction-bound savepoint helper。
 - savepoint operation失败会`ROLLBACK TO`并`RELEASE`；release失败也尝试cleanup。
@@ -146,7 +148,7 @@ SqliteStore::reconcile_intent(transition_id) -> ReconcileIntentResult // prepare
 - `insert_intent`：`transition_id` 与业务六元组双唯一键；同事实重放返回原 intent；非法边 fail closed。
 - 机械 commit 在同一 savepoint 内经 `domain-task::apply_action_transition` 做完整领域 evidence 门，再 CAS Action + `append_active_event_v2(action.state_changed)` + 回写 `committed_event_id`；失败不占 sequence/position。同 event id 重放幂等，只验 intent↔event 链路，不要求 Action head 仍停在该 revision。
 - `reconcile_intent`：只观察 stored 关系，返回 `prepared|committed|corrupt`，不补造 event 或更换 transition id。Committed 只对比 intent↔outbox event 快照字段；后续合法推进不得映射 Corrupt。
-- 已实现 Policy binding owner（`evaluate_action_permission`）与 Approval resolution owner（`resolve_approval_and_commit_action`，同一 savepoint 内解析 current resolution、重新派生 usable proof 并驱动 `pending→approved`）。lease acquire/dispatch/release、child materializer、recovery orchestrator 仍**未实现**。
+- 已实现 Policy binding owner、Approval resolution owner，以及 migration 0010 的 Lease/Stop **持久化基座**。lease acquire/dispatch/release、Stop activate/read、child materializer、recovery orchestrator 仍**未实现**；在 `acquire_lease` 编码前必须先闭合 ActionTransitionIntent generation 的 pre/post-CAS 表达冲突。
 
 ## PolicyRuleV2 + PermissionDecisionV2 + 评估编排（切片4b）
 
@@ -211,4 +213,4 @@ WriteTransaction::resolve_approval_and_commit_action(ResolveApprovalAndCommitAct
 
 ## 明确未实现
 
-root TaskCreate v2 repository + kcp method-aware runtime（3a/3b）+ v1 write删除与旧库拒绝（3c）+ Action/transition/`action.state_changed`（4a）+ PolicyRule/PD binding/评估编排（4b）+ Approval/Identity/`approval.state_changed`（4c）已落地。Child Action materialization、Action lease acquire/dispatch/release、child-completion与recovery写方法、child active Event producer、Provider真实远程验签、Publisher、versioned KCP poll、server/agentd、retention/claim lease仍未实现。Publisher/poll不在`V2InitialBuildActive`；§13.7完整闭合仍需 Lease/Stop Fence、真实远程验签与切片5 child materializer。
+root TaskCreate v2 repository + migration 0010 Lease/Stop 持久化基座等已落地。Child Action materialization、Action lease/Stop 命名 owners、child-completion与recovery写方法、child active Event producer、Provider真实远程验签、Publisher、versioned KCP poll、server/agentd、retention/claim lease仍未实现。Publisher/poll不在`V2InitialBuildActive`；§13.7完整闭合仍需 Lease/Stop Fence、真实远程验签与切片5 child materializer。

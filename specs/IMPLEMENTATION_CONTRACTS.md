@@ -2523,6 +2523,15 @@ component DAG保持`policy→[common]`无环；41 retained ownership/source byte
 
 **明确不在本切片**：child materializer、真实远程验签（Provider 边界）、Publisher/poll、五方法 handler、§13.7 全谓词闭合。
 
+### 13.6.14 Action Lease / Resource Lock / Stop Fence 持久化基座（已落地）
+
+本单元不新增独立 Lease 业务 Schema；`ActionRequestV2.lease.max_uses` 直接收紧为 integer const `1` 并经生成链投影为 const 类型。它在 `kernel-sqlite` 落地：
+
+1. **migration 0010**（descriptor v1，`ActionLeaseStopFence` phase set）：schema 阶段创建 `action_leases`、`action_resource_locks` 与单例 `stop_fence`；Rust 关系阶段拒绝任何既有内联 Lease、`leased|in_flight` Action 或非零 `execution_generation`，返回 `reinitialize-required`；guards 阶段建立 stage-then-CAS、双源投影、不可变、no-reinsert、锁归属与 Stop 不可清除守卫。目标对象名预先碰撞时同样拒绝，禁止接管或猜造已有事实。
+2. **统一提交闭包**：每个公开业务 `with_write_transaction` 成功出口在真实 `COMMIT` 前验证 Lease/Stop 关系。无 Lease、Lock、Fence 或 lease-bearing Action 时走空事实快路径；存在执行事实时，Action 内联 Lease 与关系行必须逐字段一致，`resource_refs` 与 Resource Lock 必须双向精确闭合，Stop Fence 下不得残留未收敛的副作用 Lease，且 `foreign_key_check` 必须为空。半 stage、半 delete、Fence 半收敛及锁集合缺失/多余一律回滚。
+3. **职责边界**：SQLite 只验证 Stop Actor JSON 的结构与 `actor_id` 镜像，不伪称实现 RFC 8785；未来 `activate_stop_fence` owner 必须在写入前和事务内 readback 时执行 Schema、typed decode 与 canonical JCS bytes 相等校验。`acquire_lease`、`get_action_lease`、`begin_dispatch`、`release_or_expire_lease`、`activate_stop_fence`、`get_stop_fence` 均仍未实现。
+4. **下一合同前置**：`approved→leased` 会把 execution generation 从 `G` 推进到 `G+1`；编码 owner 前必须让 ActionTransitionIntent 与机械 commit 明确表达 pre-CAS / post-CAS generation，禁止以 acquire 特例放松现有一致性校验。Stop Action event 的 causation 继续由同事务持久化 intent 派生，动态 allocator 不另造 causation UUID。
+
 阶段纪律：未满足本谓词前，不得启动可连接server；不得把空bindings或v1内部handler宣传为production可用。失败必须fail closed，不能进入“半迁移/半切换”状态。
 
 ## 14. 日志

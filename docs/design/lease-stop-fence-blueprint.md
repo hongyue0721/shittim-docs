@@ -1,14 +1,14 @@
 # Lease / Stop Fence 持久化实施蓝图（阶段 B，v2）
 
-> 状态：设计已定，未实施。本文件是 migration 0010 与 Lease/Stop owner 的实施依据，落地后应随实现同步修订或退役。
+> 状态：**部分实现**。`domain-task` Lease release effect 与 migration 0010 持久化基座已落地并独立终验 GO；Lease/Stop 命名 owner 尚未实现。本文件继续作为剩余 owner 单元的实施依据。
 > v2 说明：按 [ADR-0011](../../adr/0011-lease生命周期与stop-fence原子语义.md) 修订。v1 草稿存在九处与合同冲突的设计（Lease 只在 `leased` 存在、双源未闭合、触发器循环、单列 FK、`max_uses` 收紧无依据、Fence generation 递增、只存 actor id、Stop 副作用降格、动态 allocation 无来源），已全部修正；语义以 ADR-0011 为唯一权威。
 
 ## 1. 为什么这是硬前置
 
-`approved → leased → in_flight → completed` 是副作用 Action 的唯一合法执行链。当前
-`domain-task` 已完整定义该链的边与 evidence（含 `LeaseReleaseEffect`），但 `kernel-sqlite`
-没有任何 Lease/Resource Lock/Stop Fence 持久化，因此 `reject_unhandled_action_effects`
-对任何 `release_lease_and_locks` 效果一律失败关闭。结果：
+`approved → leased → in_flight → completed` 是副作用 Action 的唯一合法执行链。当前 `domain-task`
+已完整定义该链的边与 typed effects，migration 0010 已建立 Lease/Resource Lock/Stop Fence 关系、
+Schema/descriptor/guards、统一 COMMIT 前关系闭包与回滚证明；但 `kernel-sqlite` 仍没有任何
+命名 Lease/Stop owner，`reject_unhandled_action_effects` 仍对 release effect 失败关闭。结果：
 
 - Action 无法离开 `approved`，切片 5 child materializer 无法完成 Action；
 - 切片 4c 中「resolve/invalidate 必须撤销受影响 Lease」无法真正关闭；
@@ -20,7 +20,7 @@
 |---|---|---|
 | `ActionRequestV2.lease` | 生成类型 `ActionRequestV2Lease` | **Lease 是 Action 的内联字段**，非独立 Schema：`{holder, generation, expires_at, max_uses}` |
 | `execution_generation` | `ActionRequestV2` 顶层字段 | 每次 Lease/执行尝试单调增加；不扩大 Action 业务唯一性 |
-| `LeaseReleaseEffect` | `domain-task/src/action.rs` | 纯领域效果：`invalidate_lease` + `release_all_resource_locks`；当前仅 `leased` 三条退出边产生，`in_flight` 三条退出边需在单元 3 补齐 |
+| `LeaseReleaseEffect` | `domain-task/src/action.rs` | 纯领域效果：`invalidate_lease` + `release_all_resource_locks`；`leased | in_flight` 的六条退出边均已产生，并以封闭 `LeaseReleaseReason` 表达原因；SQLite owner 尚未消费 |
 | `StopFenceActivatedPayload` | `schemas/source/event/stop_fence_activated_payload.v1.json` | 已存在；`{generation, reason, activated_by_actor_id, activated_from_entry_point, activated_at}` |
 | `EventAggregateId::StopFenceGlobal` | `kernel-sqlite/src/outbox.rs` | 单例全局聚合已就位 |
 | 错误码 | 错误目录 | `lease_not_found` / `lease_expired` / `lease_holder_mismatch` / `action_not_executable` / `stop_fence_active` / `fence_generation_mismatch` / `approval_invalidated` 均已定义 |
@@ -29,12 +29,9 @@
 （ADR-0011 §2，`const 1`，随 0010 实现提交过生成链门禁）。Resource Lock 是 Kernel 内部并发
 治理事实而非跨进程契约对象，按内部表实现（§3.2）。
 
-## 3. migration 0010 表设计
+## 3. migration 0010 表设计（已实现）
 
-沿用 migration 0009 的 descriptor v1 风格：schema 阶段建表、Rust 关系校验、guards 阶段建触发器。
-既有库关系校验：当前没有任何代码路径写过 Action 内联 lease；0010 升级时必须扫描全部
-`actions.record_json` 要求 `lease IS NULL`，发现非空即 `reinitialize-required`，禁止猜造
-holder/expiry 回填。
+`18b03f1` 已按 migration 0009 的 descriptor v1 风格落地：schema 阶段建表、Rust 关系校验、guards 阶段建触发器；既有 Action 中出现 lease、`leased|in_flight` 或非零 `execution_generation` 即 `reinitialize-required`。统一 `with_write_transaction` 成功出口在有执行事实时校验 Action 内联 Lease、Lease 行、资源锁精确集合、Stop 收敛与外键闭包；半 stage、半 delete、Fence 半收敛均整体回滚。SQL 对 Stop Actor 只验证结构，RFC 8785 canonical bytes 仍由未来 Stop owner 在写入和 readback 时验证。
 
 ### 3.1 `action_leases`（每 Action 至多一个活跃 Lease）
 
@@ -102,9 +99,14 @@ CREATE TABLE stop_fence (
 - `stop.status` 响应的完整 `Actor` 从 `activated_by_actor_json` 构造；事件 payload 只投影
   `activated_by_actor_id`（Schema 已定）。
 
-## 4. 仓储 API 设计
+## 4. 仓储 API 设计（未实现）
 
-全部为命名 owner 编排器，经 crate-internal 机械 commit 进入唯一状态事件权威；裸 CAS 不暴露。
+编码这些 owner 前必须先闭合两个合同冲突：
+
+1. 当前 `ActionTransitionIntentV1.execution_generation` 同时被 fresh commit 当作 pre-CAS 与 post-CAS generation；普通边相等，但 acquire 必须 `G→G+1`。必须通过明确的 typed generation projection 或合同字段重构表达，禁止在校验器里加 acquire 特例绕过。
+2. Stop transaction-bound allocator 不独立分配 `causation_ref`；Action event causation 必须由同事务持久化的 ActionTransitionIntent 派生，UUID collector 只把两处登记为同一事实 alias。
+
+其余 owner 全部经 crate-internal 机械 commit 进入唯一状态事件权威；裸 CAS 不暴露。
 
 | 入口 | 职责 | 事务闭包 |
 |---|---|---|
@@ -118,8 +120,8 @@ CREATE TABLE stop_fence (
 
 - Lease 消费必须 CAS `holder + generation + expires_at`（IC §6.10.6）；
 - Stop Fence generation 必须在执行事务内**再次读取**，不能用事务外快照；
-- `domain-task` 在单元 3 为 `in_flight → completed | failed | unknown_side_effect` 补齐
-  `LeaseReleaseEffect`，SQLite 只消费 typed effect，不复制状态图；
+- `domain-task` 已为 `in_flight → completed | failed | unknown_side_effect` 补齐
+  `LeaseReleaseEffect`，并以封闭 `LeaseReleaseReason` 防止持久层解析字符串；SQLite 在单元 3 只消费 typed effect，不复制状态图；
 - `reject_unhandled_action_effects` 随之收敛：Lease owner 可消费的 typed effect 不再
   一刀切 fail closed，但仍不开放通用裸迁移入口。
 

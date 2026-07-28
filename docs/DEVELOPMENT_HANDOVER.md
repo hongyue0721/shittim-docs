@@ -6,12 +6,12 @@
 
 - **主仓库**：<https://github.com/hongyue0721/shittim>（`master`）
 - **文档镜像仓库**：<https://github.com/hongyue0721/shittim-docs>
-- **本轮代码验收基线**：`de5a8da`（Approval 顶层命令 UUID 用途权威闭合）；继续开发时以已推送的 `origin/master` 为准，并要求工作树干净。
-- **下一实现任务**：Lease/Stop Fence 持久化（ADR-0011 designed，蓝图 v2），随后 4c 清零、切片 5（migration 0011）与 §13.7。
+- **本轮代码验收基线**：`18b03f1`（migration 0010 Lease/Stop Fence 持久化基座；独立 Gemini GO）；继续开发时以已推送的 `origin/master` 为准，并要求工作树干净。
+- **下一实现任务**：先闭合 acquire 的 generation/intent 合同冲突，再实现 Lease/Stop 命名 owner；随后 4c 清零、切片 5（migration 0011）与 §13.7。
 - **同步状态**：主仓 push 与文档镜像 receipt 由 `scripts/sync-docs-repository.mjs` 校验；不得在文档中维护会随一次 push 立即失真的“领先提交数”。
 - **里程碑 `V2InitialBuildActive`（ADR-0009）** 已完成或部分完成切片：
   0 规范手术；1a root v2 持久对象 Schema×4；1b Action/child Schema×5 + `kernel-authorization` 纯库；1c-i 授权核心五 Schema；1c-ii 身份/挑战/证据八 Schema；2 root TaskCreate v2 仓库/migration 0004；3a production MethodVersionBindings 八方法集；3b KCP 切 active v2 删 v1 路径；3c sqlite v1 写路径删除/v2-only Outbox/旧库 reinitialize-required 拒绝；4a Action 仓库+`action.state_changed`/migration 0006；4b PolicyRule+PermissionDecision 仓库+评估编排/migration 0007；4c Approval/Identity 结构与 9/11 High 已闭合（migration 0008），仍属部分完成。
-- **测试基线（主会话实测）**：`kernel-sqlite` 144；全工作区测试绿；`cargo clippy --workspace --all-targets -- -D warnings` 绿；`./scripts/check-schema.sh` 全量门绿。后续改动后以实际测试输出更新，不得预写猜测数量。
+- **测试基线（主会话实测）**：`kernel-sqlite` 155；全工作区测试绿；`cargo clippy --workspace --all-targets -- -D warnings` 绿；`./scripts/check-schema.sh` 全量门绿。后续改动后以实际测试输出更新，不得预写猜测数量。
 - **Schema 数量**：当前`schemas/manifest.json`精确`80 = 38 retained + 42 component-native`；历史1c-ii快照曾为83/41。ADR-0010已直接退役三项未投产旧Policy合同。
 - **事实单一来源**：`docs/IMPLEMENTATION_MATRIX.md` 与 `docs/PROGRESS.md`，ADR/API 文档只保留状态徽章与锚点链接。
 
@@ -58,15 +58,16 @@
 
 ## 4. 下一步任务一：Lease/Stop Fence 持久化（ADR-0011）
 
-这是切片 5 的硬前置，也是当前第一个实现任务。语义已由 [`adr/0011-lease生命周期与stop-fence原子语义.md`](../adr/0011-lease生命周期与stop-fence原子语义.md) 拍板，实施依据为 [`docs/design/lease-stop-fence-blueprint.md`](design/lease-stop-fence-blueprint.md) v2，禁止参照任何旧版蓝图或记忆直接写 migration 0010。
+这是切片 5 的硬前置。语义由 [`adr/0011-lease生命周期与stop-fence原子语义.md`](../adr/0011-lease生命周期与stop-fence原子语义.md) 拍板，实施依据为 [`docs/design/lease-stop-fence-blueprint.md`](design/lease-stop-fence-blueprint.md) v2。单元 1 持久化基座与领域 Lease release effect 已完成，接续任务不得重写 migration 0010 或把表存在误报为 owner 已完成。
 
 ### 4.1 实施单元与提交顺序
 
-1. **单元 1**：migration 0010 三表（`action_leases` / `action_resource_locks` / `stop_fence`）+ CAS guards + 既有库 lease 非空即 `reinitialize-required` 的关系校验。
-2. **单元 2**：`acquire_lease`（`approved → leased`）+ `get_action_lease` 严格只读；按 ADR-0011 §7 触发器协议，双源一致（§8）。
-3. **单元 3**：`begin_dispatch` / `release_or_expire_lease`；`domain-task` 为 `in_flight` 三条退出边补齐 `LeaseReleaseEffect`；`reject_unhandled_action_effects` 收敛为 Lease owner 可消费 typed effect。
-4. **单元 4**：`activate_stop_fence` / `get_stop_fence`；v1 原子范围（ADR-0011 §4）+ transaction-bound allocation source（§5）+ canonical Actor 快照（§6）。
-5. **单元 5**：4c 清零——Approval invalidation/replacement 同事务按 ADR-0011 §3 分流 Action（approved 重门控 / leased→cancelled / in_flight 不打断）。
+1. **单元 1（已完成，`18b03f1`）**：migration 0010 三表、descriptor/关系校验、CAS/不可变守卫、`max_uses=1` 生成链与统一业务 COMMIT 前关系闭包；独立 Gemini GO（0C/0H/0M/1L）。
+2. **单元 2 前置合同（下一步）**：解决 `ActionTransitionIntentV1.execution_generation` 在 acquire 边同时承担 pre-CAS 与 post-CAS generation 的矛盾，并明确 Stop causation 是持久 intent 的同一事实 alias，不是动态 allocator 的独立 UUID。
+3. **单元 2 owner**：`acquire_lease`（`approved → leased`）+ `get_action_lease` 严格只读；按 ADR-0011 §7 触发器协议，双源一致（§8）。
+4. **单元 3**：`begin_dispatch` / `release_or_expire_lease`，消费 `domain-task` 已完成的封闭 `LeaseReleaseReason` / `LeaseReleaseEffect`。
+5. **单元 4**：`activate_stop_fence` / `get_stop_fence`；v1 原子范围 + transaction-bound allocation source + canonical Actor 快照。
+6. **单元 5**：4c 清零——Approval invalidation/replacement 同事务按 ADR-0011 §3 分流 Action。
 
 并行线：Ed25519 `RemoteSignatureVerifier`（ADR-0011 §10），在 4c 最终验收前合流。
 
