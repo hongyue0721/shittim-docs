@@ -13,7 +13,7 @@
 - [Schema 生成与契约类型](schema-generation.md)
 - [domain-task 内部 Rust API](domain-task.md)（非 KCP 外部 API）
 - [domain-policy 内部 Rust API](domain-policy.md)（非 KCP 外部 API）
-- [kernel-sqlite 内部 Rust API](kernel-sqlite.md)（migration 0001–0010，0010 为 Lease/Lock/Fence 持久化基座但 owner 未实现；非KCP外部API）
+- [kernel-sqlite 内部 Rust API](kernel-sqlite.md)（migration 0001–0010；0010 为 Lease/Lock/Fence 持久化基座；`acquire_lease` / `get_action_lease` 已落地；`begin_dispatch` / `release_or_expire_lease` / `activate_stop_fence` / `get_stop_fence` 仍待实现；非 KCP 外部 API）
 - [KCP Value preflight 与注册式 dispatcher](kcp-preflight-dispatcher.md)（已实现、不可连接、非 SDK）
 - [kernel-kcp typed application handler](kernel-kcp.md)（`system.ping`、`task.create`、`task.get`；不可连接、非 SDK）
 - [Task创建、Child materialization与repository硬合同](task-repository-contract.md)（root/Action/PD/Approval基础已落地；child materializer未完成；无v1数据迁移）

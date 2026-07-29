@@ -1,6 +1,6 @@
 # Task创建、Child materialization 与 repository 硬合同
 
-> 状态徽章：**partial**（首批 12 Schema + `kernel-task-creation` pure library + official fixtures/harness，切片1b Action/child 授权 Schema + `kernel-authorization` pure crate，切片2 root repository、切片3a–3c active v2 runtime/v1 write 删除、切片4a–4c Action/Policy/PermissionDecision/Approval/Identity repositories 与授权编排 **已实现**；Lease/Stop Fence 与 child materializer **未实现**）
+> 状态徽章：**partial**（首批 12 Schema + `kernel-task-creation` pure library + official fixtures/harness，切片1b Action/child 授权 Schema + `kernel-authorization` pure crate，切片2 root repository、切片3a–3c active v2 runtime/v1 write 删除、切片4a–4c Action/Policy/PermissionDecision/Approval/Identity repositories 与授权编排 **已实现**；`acquire_lease` / `get_action_lease` 已落地；Lease/Stop dispatch/release/activation、child materializer **未实现**）
 
 ## 唯一事实源
 

@@ -1,6 +1,6 @@
 # Lease / Stop Fence 持久化实施蓝图（阶段 B，v2）
 
-> 状态：**部分实现**。`domain-task` Lease release effect 与 migration 0010 持久化基座已落地并独立终验 GO；Lease/Stop 命名 owner 尚未实现。本文件继续作为剩余 owner 单元的实施依据。
+> 状态：**部分实现**。`domain-task` Lease release effect、generation/intent 合同拆分与 `acquire_lease` / `get_action_lease` 已落地并独立测试；`begin_dispatch` / `release_or_expire_lease` / `activate_stop_fence` / `get_stop_fence` 尚未实现。本文件继续作为剩余 owner 单元的实施依据。
 > v2 说明：按 [ADR-0011](../../adr/0011-lease生命周期与stop-fence原子语义.md) 修订。v1 草稿存在九处与合同冲突的设计（Lease 只在 `leased` 存在、双源未闭合、触发器循环、单列 FK、`max_uses` 收紧无依据、Fence generation 递增、只存 actor id、Stop 副作用降格、动态 allocation 无来源），已全部修正；语义以 ADR-0011 为唯一权威。
 
 ## 1. 为什么这是硬前置

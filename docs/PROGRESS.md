@@ -1,6 +1,6 @@
 # Shittim 实现进度
 
-> 状态日期：2026-07-28（`V2InitialBuildActive`：Policy v2、Action/PermissionDecision、Approval/Identity 与顶层 UUID 用途闭集已落地；Action Lease 领域释放效果和 migration 0010 Lease/Resource Lock/Stop Fence 持久化基座已完成并独立终验 GO。切片 4c 原 11 项 High 已闭合 9 项，剩 Lease 关联撤销与真实远程验签 2 项；Lease/Stop 命名 owner、child materializer 与 §13.7 五方法 handler 仍未实现。）
+> 状态日期：2026-07-29（`V2InitialBuildActive`：Policy v2、Action/PermissionDecision、Approval/Identity 与顶层 UUID 用途闭集已落地；Action Lease 领域释放效果、generation/intent 合同拆分、`acquire_lease` / `get_action_lease` 执行授权与严格读取 owner 已落地；migration 0010 Lease/Resource Lock/Stop Fence 持久化基座已落地并独立终验 GO。切片 4c 原 11 项 High 已闭合 9 项，剩 Lease 关联撤销与真实远程验签 2 项；`begin_dispatch` / `release_or_expire_lease` / `activate_stop_fence` / `get_stop_fence`、child materializer 与 §13.7 五方法 handler 仍未实现。）
 >
 > **新设备接力开发请先读 [`DEVELOPMENT_HANDOVER.md`](DEVELOPMENT_HANDOVER.md)**（环境准备、标准流程、切片 5/6 精确任务、验收债务与已知问题）。
 
@@ -66,7 +66,7 @@
 
 **未实现（不得宣称完成）**
 
-- **Lease / Stop Fence 仅完成持久化基座，命名 owner 尚未实现**：`domain-task` 已闭合 Lease 生命周期的 typed effect；migration 0010 已建立 Action Lease、Resource Lock、Stop Fence 三表及 descriptor、关系守卫、`max_uses=1` 生成合同与统一 COMMIT 前关系闭包，半 stage/delete/Fence、锁集合缺失/多余与 REPLACE 绕过均失败关闭。但仍无 `acquire_lease` / `begin_dispatch` / `release_or_expire_lease` / `activate_stop_fence` / 严格读取 owner，SQLite 仍不会消费 typed Lease effect，所以 `approved → leased → in_flight → completed` 当前仍走不通。单元 2 开码前必须先闭合 `ActionTransitionIntentV1.execution_generation` 无法同时表达 acquire 前后 generation 的合同冲突，以及 Stop 动态 allocation 中 causation 必须别名到持久 intent 而非独立分配的问题。
+- **Lease / Stop Fence 完成领域释放效果、generation/intent 合同拆分与 acquire/strict read owner，其余 owner 尚未实现**：`domain-task` 已闭合 Lease 生命周期的 typed effect；migration 0010 已建立 Action Lease、Resource Lock、Stop Fence 三表及 descriptor、关系守卫、`max_uses=1` 生成合同与统一 COMMIT 前关系闭包；`ActionTransitionIntentV1` 已拆分为 `expected_execution_generation` / `resulting_execution_generation` 以支持 `approved→leased` 的 `G→G+1`；`WriteTransaction::acquire_lease` 与 `SqliteStore::get_action_lease` 已落地，执行授权从真实 current Task/Action/PD/Approval/资源事实派生，Stop Fence 未激活时方可获取，严格读取验证双源一致、intent/event 一对一闭包。但 `begin_dispatch` / `release_or_expire_lease` / `activate_stop_fence` / `get_stop_fence` 仍未实现，SQLite 仍不会消费 typed Lease effect，所以 `approved → leased → in_flight → completed` 当前只走完 `approved→leased`，后续仍走不通。
 - **切片 4c 安全闭环接近完成，仍未最终验收**：原 11 项 High 已闭合 9 项。除既有 operation Approval 当前 PD 绑定、Challenge 过期 CAS/审计和 identity 审计外，本轮又闭合 5 项：每个顶层 Approval/Policy 复合命令用唯一 transaction-bound typed collector，在任何业务写入前覆盖 command allocations 与该路径实际读取、验证或消费的 persisted Task/Scope/Action/PD/PolicyRule/request/challenge/evidence/credential UUID 用途，嵌套 prepare/apply 禁止另建 collector；事件 payload 从权威原始 request 回读真实 confirmation mode；denied resolution 审计为 `outcome=blocked`、稳定 reason code 且保留 operation PD/policy context；local/system 证据校验 actor/entry/time/challenge/request/chain/task/subject/material 绑定；system/remote Challenge 消费与 Approval resolution/head/Event/Audit 通过 `consume_challenge_with_binding` 同一事务提交，过期返回 typed `ChallengeExpired` 而不写 resolution。
 - **仍未闭合的 4c High（2 项）**：单独调用 `resolve` / `invalidate_and_optionally_replace` 仍未完整更新 Action 关联并撤销受影响 Lease（撤销 Lease 必须等 Lease 持久化；`resolve_approval_and_commit_action` 已能基于重新派生 proof 同事务驱动 `pending→approved`）；`remote_signature` 尚无真实密码学验签。
 - **`remote_signature` 如实失败关闭**：远程 Challenge 的过期/消费与 resolution 已有原子事务闭包，但无密码学验签时，远程决议一律不得作为批准 Action 的授权（`ApprovalRequired`）；待可信 `RemoteSignatureVerifier`（首个实现为 Ed25519 RFC8032）落地后再开放。
@@ -91,7 +91,7 @@
 - [x] 切片 4b：PolicyRule + PermissionDecision repositories + Action 评估编排
 - [~] 切片 4c：Approval/Identity repository（原 11 项 High 已闭合 9 项；剩 Lease 关联撤销与真实远程验签 2 项，不得称完成）
 - [x] 收尾：Approval 当前绑定 PD 门 / Action 唯一状态事件权威 / post-Outbox 全量回滚证明
-- [~] Lease + Stop Fence：领域 Lease release effect 与 migration 0010 持久化基座已完成；generation/intent 合同、acquire/dispatch/release/Stop owners 与 Approval Lease 撤销待完成
+- [~] Lease + Stop Fence：领域 release effect、generation/intent 合同与 `acquire_lease` / `get_action_lease` 已完成；`begin_dispatch` / `release_or_expire_lease` / `activate_stop_fence` / `get_stop_fence` 与 Approval Lease 撤销待完成
 - [ ] 切片 5：child materializer
 - [ ] 切片 6：§13.7 谓词闭合（child/Action/PD/Approval + 其余 producers）
 - [ ] active Event business producer：child（root已在切片2接入，action已在4a接入，approval已在4c接入）
@@ -105,7 +105,7 @@
 ## 当前阻塞
 
 - kcp runtime与sqlite repository已切到active create v2 / Outbox v2-only；Action/`action.state_changed`（4a）、PD/PolicyRule/评估编排（4b）、Approval/Identity/`approval.state_changed`（4c 结构层）已落地；五方法无handler，禁止启动server。
-- §13.7 谓词 4 当前为 **false**：migration 0010 的表和 COMMIT 前关系闭包已就位，但 repository owner 尚未组成可执行链。剩余执行前置是 Lease/Stop owners、child materializer与真实远程验签。
+- §13.7 谓词 4 当前为 **false**：migration 0010 的表和 COMMIT 前关系闭包已就位，`acquire_lease` / `get_action_lease` 已组成 owner，但完整可执行链仍需 `begin_dispatch` / `release_or_expire_lease` / `activate_stop_fence` / `get_stop_fence`、child materializer 与真实远程验签。
 - legacy v1 repository 的 Delegation 正向路径未实现（非 null 固定 not found）；active v2 repository 同样在 Delegation authority 未落地前 fail-closed 返回 `delegation_not_found`。
 - Task list cursor 编码须先 ADR/API 拍板。
 - Audit：`permission.evaluated` 已在评估编排同事务校验 policy_context 与 PD 字段相等；仍缺 rollback 权威投影、Provider/ModelCall 一致性与其它业务 producer。
@@ -115,8 +115,8 @@
 
 ## 下一步
 
-1. 在实现 `acquire_lease` 前先修订并验证 generation/intent 合同：现有 `ActionTransitionIntentV1.execution_generation` 同时被当作 pre-CAS 与 post-CAS generation，而 acquire 必须 `G→G+1`；不得用例外条件绕过。同期收敛 Stop 动态 allocation：causation 必须由持久 intent 派生，只作为同一事实 alias，不另分配 UUID。
-2. 在合同闭合后实现 `acquire_lease` / `get_action_lease`，再实现 `begin_dispatch` / `release_or_expire_lease` 消费 typed effect，随后实现 Stop owner 与 Approval invalidation 同事务撤销 Lease（4c 清零）。
+1. 在实现 `acquire_lease` 前先修订并验证 generation/intent 合同：现有 `ActionTransitionIntentV1.execution_generation` 同时被当作 pre-CAS 与 post-CAS generation，而 acquire 必须 `G→G+1`；不得用例外条件绕过。同期收敛 Stop 动态 allocation：causation 必须由持久 intent 派生，只作为同一事实 alias，不另分配 UUID。**（已随 commit `c2efc5d` 完成）**
+2. 实现 `acquire_lease` / `get_action_lease`（**已落地**），再实现 `begin_dispatch` / `release_or_expire_lease` 消费 typed effect，随后实现 Stop owner 与 Approval invalidation 同事务撤销 Lease（4c 清零）。
 3. 引入可信 `RemoteSignatureVerifier` 边界（首个实现为 Ed25519 RFC8032 pure mode，纯 crypto 放 `kernel-authorization`），解除 `remote_signature` 的失败关闭并完成 4c 最终验收。
 4. 切片5：实现child materializer并接入child `task.created` producer（mapping 表用 migration 0011；child creation Audit 的 actor/entry_point 取 typed execution context）。
 5. 切片6：在切片5完成后闭合§13.7全部谓词。
@@ -124,7 +124,7 @@
 
 ## 最近验证
 
-当前代码基线（含 Approval/Identity 与顶层 UUID 用途闭集）验证命令：
+当前代码基线（含 Approval/Identity 与顶层 UUID 用途闭集、`acquire_lease` / `get_action_lease`）验证命令：
 
 ```text
 export PATH="$HOME/.local/share/pnpm:$PATH"

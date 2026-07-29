@@ -32,7 +32,7 @@
 - `docs/api/kcp-preflight-dispatcher.md` — 95 lines
 - `docs/api/kernel-control-protocol.md` — 90 lines
 - `docs/api/kernel-kcp.md` — 73 lines
-- `docs/api/kernel-sqlite.md` — 216 lines
+- `docs/api/kernel-sqlite.md` — 222 lines
 - `docs/api/schema-generation.md` — 121 lines
 - `docs/api/task-repository-contract.md` — 44 lines
 - `docs/design/lease-stop-fence-blueprint.md` — 155 lines

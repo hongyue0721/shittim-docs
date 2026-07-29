@@ -64,7 +64,7 @@
 
 1. **单元 1（已完成，`18b03f1`）**：migration 0010 三表、descriptor/关系校验、CAS/不可变守卫、`max_uses=1` 生成链与统一业务 COMMIT 前关系闭包；独立 Gemini GO（0C/0H/0M/1L）。
 2. **单元 2 前置合同（下一步）**：解决 `ActionTransitionIntentV1.execution_generation` 在 acquire 边同时承担 pre-CAS 与 post-CAS generation 的矛盾，并明确 Stop causation 是持久 intent 的同一事实 alias，不是动态 allocator 的独立 UUID。
-3. **单元 2 owner**：`acquire_lease`（`approved → leased`）+ `get_action_lease` 严格只读；按 ADR-0011 §7 触发器协议，双源一致（§8）。
+3. **单元 2 owner**：`acquire_lease` / `get_action_lease`（`approved → leased` + 严格只读）已按 ADR-0011 §7 协议落地；`begin_dispatch` / `release_or_expire_lease` / `Stop activate/read` 待后续单元完成。
 4. **单元 3**：`begin_dispatch` / `release_or_expire_lease`，消费 `domain-task` 已完成的封闭 `LeaseReleaseReason` / `LeaseReleaseEffect`。
 5. **单元 4**：`activate_stop_fence` / `get_stop_fence`；v1 原子范围 + transaction-bound allocation source + canonical Actor 快照。
 6. **单元 5**：4c 清零——Approval invalidation/replacement 同事务按 ADR-0011 §3 分流 Action。

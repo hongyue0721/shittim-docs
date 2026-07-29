@@ -136,6 +136,9 @@ WriteTransaction::insert_intent(ActionTransitionIntentV1) -> InsertIntentResult
 SqliteStore::get_intent(transition_id) -> Option<ActionTransitionIntentV1>
 SqliteStore::get_for_action_revision(...) -> Option<ActionTransitionIntentV1>
 SqliteStore::reconcile_intent(transition_id) -> ReconcileIntentResult // prepared|committed|corrupt
+// Lease/Stop Fence owners implemented in this slice:
+WriteTransaction::acquire_lease(AcquireActionLeaseCommand) -> ActionLeaseSnapshot
+SqliteStore::get_action_lease(id, read_at: DateTime<Utc>) -> Option<ActionLeaseSnapshot>
 
 // Production status edges are owned by named business orchestrators. The mechanical
 // mark_committed_inside/mark_*_committed_with_event bridge is crate-internal; the raw
@@ -148,7 +151,7 @@ SqliteStore::reconcile_intent(transition_id) -> ReconcileIntentResult // prepare
 - `insert_intent`：`transition_id` 与业务六元组双唯一键；同事实重放返回原 intent；非法边 fail closed。
 - 机械 commit 在同一 savepoint 内经 `domain-task::apply_action_transition` 做完整领域 evidence 门，再 CAS Action + `append_active_event_v2(action.state_changed)` + 回写 `committed_event_id`；失败不占 sequence/position。同 event id 重放幂等，只验 intent↔event 链路，不要求 Action head 仍停在该 revision。
 - `reconcile_intent`：只观察 stored 关系，返回 `prepared|committed|corrupt`，不补造 event 或更换 transition id。Committed 只对比 intent↔outbox event 快照字段；后续合法推进不得映射 Corrupt。
-- 已实现 Policy binding owner、Approval resolution owner，以及 migration 0010 的 Lease/Stop **持久化基座**。lease acquire/dispatch/release、Stop activate/read、child materializer、recovery orchestrator 仍**未实现**；在 `acquire_lease` 编码前必须先闭合 ActionTransitionIntent generation 的 pre/post-CAS 表达冲突。
+- 已实现 Policy binding owner、Approval resolution owner、**Action Lease acquire/strict read owner**，以及 migration 0010 的 Lease/Stop **持久化基座**。`begin_dispatch` / `release_or_expire_lease` / `activate_stop_fence` / `get_stop_fence`、child materializer、recovery orchestrator 仍**未实现**；Stop 动态 allocation 已按 causation 必须别名到持久 intent 收敛。
 
 ## PolicyRuleV2 + PermissionDecisionV2 + 评估编排（切片4b）
 
@@ -201,7 +204,10 @@ WriteTransaction::resolve_approval_and_commit_action(ResolveApprovalAndCommitAct
 - **`remote_signature` 如实失败关闭**：尚无密码学验签，因此远程决议不得作为批准 Action 的授权（`ApprovalRequired`），待可信验签边界落地后开放。
 - **Approval 解析证据、UUID 与审计**：`approval.state_changed.confirmation_mode` 从链的权威原始 request 回读，缺失/损坏返回 `stored_data_invalid`；denied resolution Audit 固定 `outcome=blocked`、reason `approval_resolved_denied` 并保留 operation PD/policy context。每个顶层 `resolve` / `resolve_approval_and_commit_action` / `invalidate_and_optionally_replace` 使用唯一 transaction-bound typed collector，外层 Action transition/event allocation 与内层 request/head/Challenge/Task/PD/evidence/credential persisted facts 必须在任何 consume/append/CAS 前进入同一用途闭集；相同 UUID 只允许同一语义事实 mirror，跨用途碰撞返回 `ContractInvalid` 且零写入。
 - **Identity / Challenge 原子闭包**：Challenge 消费强制 `now >= expires_at` 过期 CAS；公开的可独立提交 `consume_challenge` 已删除，system/remote resolution 通过 crate 内 `consume_challenge_with_binding` 把 consume 与 Approval record/head/Event/Audit 放在同一 savepoint；过期返回 typed `ChallengeExpired`，只提交 Challenge 终态与 identity Audit。local/system 证据校验 resolver actor/entry、时间窗、challenge/request/chain/task/subject/material 绑定；credential 生命周期与 local/system 证据插入均写 identity Audit。
-- 本阶段仍未实现：child materializer、Lease/Stop owner（`acquire_lease` / `begin_dispatch` / `release_or_expire_lease` / `activate_stop_fence` / `get_stop_fence` / `get_action_lease`，语义已由 ADR-0011 拍板，实施按蓝图 v2）与 recovery 闭集、Provider 真实远程验签；Policy binding 已实现。单独调用 `resolve` / `invalidate_and_optionally_replace` 尚不更新 Action 关联、不撤销 Lease（Action 批准路径请用 `resolve_approval_and_commit_action`）。
+- 本阶段仍未实现：child materializer、Lease/Stop owner 其余入口（`begin_dispatch` / `release_or_expire_lease` / `activate_stop_fence` / `get_stop_fence`）、recovery 闭集、Provider 真实远程验签；Policy binding 与 `acquire_lease` / `get_action_lease` 已实现。单独调用 `resolve` / `invalidate_and_optionally_replace` 尚不更新 Action 关联、不撤销 Lease（Action 批准路径请用 `resolve_approval_and_commit_action`）。
+- **`acquire_lease` 责任边界**：仅在 Stop Fence 未激活时执行；从 Action 的 canonical `resource_refs` 派生 Resource Lock 集合；在同一 savepoint 内顺序插入 `action_leases` / `action_resource_locks`、写 `approved → leased` intent（`expected_execution_generation=G`，`resulting_execution_generation=G+1`）、CAS Action（revision +1、execution_generation +1、内联 lease 镜像）、追加 `action.state_changed`，失败整体回滚。重名资源冲突返回 `action_not_executable` 并回滚，不占 sequence。
+- **`get_action_lease` 严格只读**：在 leased / in_flight 状态验证 Action 内联 lease、action_leases 行、Resource Lock 集合与 canonical `resource_refs` 完全一致、max_uses=1、lease generation 与 Action.execution_generation 一致、acquisition intent 与 event 一对一闭包；Stop Fence 激活时返回 `stop_fence_active`；lease 过期或数据破损返回 `stored_data_invalid`。
+- **需 effects 的其它边仍 fail closed**：`leased → approved|cancelled|unknown_side_effect` 与 `in_flight` 终态仍要求 typed `LeaseReleaseEffect`，在 `release_or_expire_lease` / `begin_dispatch` 落地前拒绝，禁止静默半提交。
 
 ## Transaction-bound rate limit
 
@@ -213,4 +219,4 @@ WriteTransaction::resolve_approval_and_commit_action(ResolveApprovalAndCommitAct
 
 ## 明确未实现
 
-root TaskCreate v2 repository + migration 0010 Lease/Stop 持久化基座等已落地。Child Action materialization、Action lease/Stop 命名 owners、child-completion与recovery写方法、child active Event producer、Provider真实远程验签、Publisher、versioned KCP poll、server/agentd、retention/claim lease仍未实现。Publisher/poll不在`V2InitialBuildActive`；§13.7完整闭合仍需 Lease/Stop Fence、真实远程验签与切片5 child materializer。
+root TaskCreate v2 repository + migration 0010 Lease/Stop 持久化基座 + **Action Lease acquire/strict read owner** 已落地。Child Action materialization、Action lease dispatch/release/Stop owner（`begin_dispatch` / `release_or_expire_lease` / `activate_stop_fence` / `get_stop_fence`）、child-completion与recovery写方法、child active Event producer、Provider真实远程验签、Publisher、versioned KCP poll、server/agentd、retention/claim lease仍未实现。Publisher/poll不在`V2InitialBuildActive`；§13.7完整闭合仍需 Lease dispatch/release/Stop Fence、真实远程验签与切片5 child materializer。
