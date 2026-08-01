@@ -7,7 +7,7 @@
 - **主仓库**：<https://github.com/hongyue0721/shittim>（`master`）
 - **文档镜像仓库**：<https://github.com/hongyue0721/shittim-docs>
 - **本轮代码验收基线**：`18b03f1`（migration 0010 Lease/Stop Fence 持久化基座；独立 Gemini GO）；继续开发时以已推送的 `origin/master` 为准，并要求工作树干净。
-- **下一实现任务**：先闭合 acquire 的 generation/intent 合同冲突，再实现 Lease/Stop 命名 owner；随后 4c 清零、切片 5（migration 0011）与 §13.7。
+- **下一实现任务**：`begin_dispatch` / `release_or_expire_lease` 消费 typed Lease effect，随后 Stop Fence owner（`activate_stop_fence` / `get_stop_fence`）与 4c 清零（Approval invalidation 同事务撤销 Lease、真实远程验签）；再进入切片 5（migration 0011 child materializer）与 §13.7。generation/intent 合同冲突已闭合、`acquire_lease` / `get_action_lease` 已落地，不得重复实现。
 - **同步状态**：主仓 push 与文档镜像 receipt 由 `scripts/sync-docs-repository.mjs` 校验；不得在文档中维护会随一次 push 立即失真的“领先提交数”。
 - **里程碑 `V2InitialBuildActive`（ADR-0009）** 已完成或部分完成切片：
   0 规范手术；1a root v2 持久对象 Schema×4；1b Action/child Schema×5 + `kernel-authorization` 纯库；1c-i 授权核心五 Schema；1c-ii 身份/挑战/证据八 Schema；2 root TaskCreate v2 仓库/migration 0004；3a production MethodVersionBindings 八方法集；3b KCP 切 active v2 删 v1 路径；3c sqlite v1 写路径删除/v2-only Outbox/旧库 reinitialize-required 拒绝；4a Action 仓库+`action.state_changed`/migration 0006；4b PolicyRule+PermissionDecision 仓库+评估编排/migration 0007；4c Approval/Identity 结构与 9/11 High 已闭合（migration 0008），仍属部分完成。
@@ -19,14 +19,14 @@
 
 1. 安装 Rust toolchain（`rustup`），确保 `cargo`、`rustc` 在 PATH。
 2. 安装 Node 与 pnpm：
-   - 推荐已存在 `Node 24.18.0` + `pnpm 11.3.0`；pnpm 路径加入 `export PATH="$HOME/.local/share/pnpm:$PATH"`。
+   - 推荐已存在 `Node 24.18.0` + `pnpm 11.3.0`；Node runtime 路径加入 `export PATH="$HOME/.local/share/pnpm/bin:$PATH"`。
    - 若 Node 缺失，使用 pnpm 用户级 runtime 安装：`pnpm env use --global 24.18.0`。
    - 校验：`node scripts/check-node-toolchain.mjs`（读取 `package.json` 的 `engines` 与 `packageManager`，要求精确版本）。
-3. 设置大/临时产物目录到 `/mnt/data`：
+3. 设置大/临时产物目录到任意可写位置（推荐复用 gitignore 的 `rust/target` 与 `$HOME/.cache`）：
 
    ```bash
-   export TMPDIR=/mnt/data/shittim-build-tmp
-   export CARGO_TARGET_DIR=/mnt/data/shittim-cargo-target
+   export TMPDIR="${TMPDIR:-$HOME/.cache/shittim-build-tmp}"
+   export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$PWD/rust/target}"
    mkdir -p "$TMPDIR" "$CARGO_TARGET_DIR"
    ```
 

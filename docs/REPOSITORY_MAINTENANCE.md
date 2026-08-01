@@ -98,11 +98,11 @@ ADR 与 `docs/api/*` 页面**只允许**一枚状态徽章（如 `implemented` /
 
 **双仓 sync 工具及其 Node 测试的临时目录合同（仅本工具链）**：文档同步测试根 `/mnt/data/shittim-docs-sync-tests` 与 `update-file-manifest --self-test` 使用的 mode `0700` 根 `/mnt/data/shittim-file-manifest-tests`（mode `0600` 独占锁 `.self-test.lock`）仍固定在 `/mnt/data` 下；每个 fixture 独立创建并在结束时递归清理，不读取 `os.tmpdir()`。该约束**只**约束上述工具测试，**不得**被解读为“整个 workspace 禁止 `/tmp`”。
 
-**本阶段仓库编译与测试运行时的主机约定（与上条不同层）**：当前维护者/Agent 在本主机跑编译或本阶段全量/focused 测试时，运行命令必须显式设置 `TMPDIR` 与（Rust 时）`CARGO_TARGET_DIR` 到 `/mnt/data` 下可写目录，例如：
+**本阶段仓库编译与测试运行时的主机约定（与上条不同层）**：当前维护者/Agent 在本主机跑编译或本阶段全量/focused 测试时，运行命令必须显式设置 `TMPDIR` 与（Rust 时）`CARGO_TARGET_DIR` 到**任意可写目录**（推荐仓库外或已 gitignore 的目录），禁止写死单一 host 路径，例如：
 
 ```text
-export TMPDIR=/mnt/data/shittim-build-tmp
-export CARGO_TARGET_DIR=/mnt/data/shittim-cargo-target
+export TMPDIR="${TMPDIR:-$HOME/.cache/shittim-build-tmp}"
+export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$PWD/rust/target}"
 mkdir -p "$TMPDIR" "$CARGO_TARGET_DIR"
 ```
 
@@ -111,7 +111,7 @@ Rust 库与测试代码应继续使用 `TMPDIR` / `std::env::temp_dir` / `tempfi
 ### 6.2 CLI 与 npm scripts
 
 ```text
-export PATH="$HOME/.local/share/pnpm:$PATH"
+export PATH="$HOME/.local/share/pnpm/bin:$PATH"
 pnpm run check:docs-repository   # node scripts/sync-docs-repository.mjs --check
 pnpm run sync:docs-repository    # node scripts/sync-docs-repository.mjs --sync
 pnpm run test:docs-repository    # node --test scripts/sync-docs-repository.test.mjs

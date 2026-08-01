@@ -111,7 +111,7 @@
 - Audit：`permission.evaluated` 已在评估编排同事务校验 policy_context 与 PD 字段相等；仍缺 rollback 权威投影、Provider/ModelCall 一致性与其它业务 producer。
 - Extension SDK Base / Computer Use 仍为 `contract-only`；不得把规范或根 Node 工作区冒充 SDK 实现。
 - 真实 Provider/Channel/Privilege Broker 需要后续真实环境；当前无伪造支持。
-- 默认 PATH 可能不是 Node 24.18.0；须显式 `~/.local/share/pnpm`。
+- 默认 PATH 可能不是 Node 24.18.0；须显式将 `~/.local/share/pnpm/bin` 放在 PATH 最前。
 
 ## 下一步
 
@@ -127,9 +127,9 @@
 当前代码基线（含 Approval/Identity 与顶层 UUID 用途闭集、`acquire_lease` / `get_action_lease`）验证命令：
 
 ```text
-export PATH="$HOME/.local/share/pnpm:$PATH"
-export TMPDIR=/mnt/data/shittim-build-tmp
-export CARGO_TARGET_DIR=/mnt/data/shittim-cargo-target
+export PATH="$HOME/.local/share/pnpm/bin:$PATH"
+export TMPDIR="${TMPDIR:-$HOME/.cache/shittim-build-tmp}"
+export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$PWD/rust/target}"
 cargo test --manifest-path rust/Cargo.toml -p kernel-kcp
 cargo test --manifest-path rust/Cargo.toml --workspace
 cargo clippy --manifest-path rust/Cargo.toml --workspace --all-targets -- -D warnings

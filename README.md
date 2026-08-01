@@ -6,7 +6,7 @@
 
 1. `AGENT.md` 是宪法：全局不变量、可信核心边界、依赖方向与编码规则。
 2. `specs/*.md` 是各领域的唯一规范事实源；同一字段、枚举、状态机不得在其他文档复制定义。
-3. [`adr/`](adr/README.md)记录未被规范覆盖的局部实施决策；accepted不等于代码全部完成。ADR-0009将里程碑定为`V2InitialBuildActive`并采用fresh baseline；切片0–4c已落地，child materializer仍未完成。ADR-0010将Policy matcher固定为直接消费active v2合同，并直接退役三项未投产旧Policy合同；当前Schema基线为`80 = 38 retained + 42 component-native`。
+3. [`adr/`](adr/README.md)记录未被规范覆盖的局部实施决策；accepted不等于代码全部完成。ADR-0009将里程碑定为`V2InitialBuildActive`并采用fresh baseline；切片0–4b已落地、4c 部分完成（原 11 项 High 剩 2 项：Lease 关联撤销与真实远程验签），child materializer仍未完成。ADR-0010将Policy matcher固定为直接消费active v2合同，并直接退役三项未投产旧Policy合同；当前Schema基线为`80 = 38 retained + 42 component-native`。
 4. 源码、Schema 与测试必须实现本规范，不能反向改变规范。
 
 `PROJECT_OVERVIEW.md` 是非规范产品概览，`FILE_MANIFEST.md` 是非规范元数据（由 `scripts/update-file-manifest.mjs` 从 Git Markdown source set 生成，禁止手改）；二者不定义行为。冲突时，以 AGENT 的硬不变量、再以对应领域 spec 为准。

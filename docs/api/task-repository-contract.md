@@ -22,7 +22,7 @@
 
 - active `task.create` = v2 root-only；**repository 已实现**（`WriteTransaction::create_root_task_v2`）；**KCP method-aware preflight / handler / adapter 已接**（切片3b → `create_root_task_v2`）；
 - v1 仅 Schema/fixture 历史验证，production 请求得 `unsupported_schema_version`；v1 repository write **已删除**（切片3c），不是持续维护路径；
-- child 唯一新写入口为 `kernel.task/task.child.create`（materializer 未实现）；Action / Policy / PermissionDecision / Approval / Identity repositories 已实现，但 Lease/Stop Fence 尚未落地；
+- child 唯一新写入口为 `kernel.task/task.child.create`（materializer 未实现）；Action / Policy / PermissionDecision / Approval / Identity repositories 已实现，Lease 持久化基座与 `acquire_lease` / `get_action_lease` 已落地，但 dispatch/release/Stop Fence owner 尚未实现；
 - 不支持 v1 业务数据迁移；旧开发库 `reinitialize-required`（切片3c 已落地）；Outbox production API 为 v2-only；
 - production bindings + v2 dispatcher + v2 repository 是 `V2InitialBuildActive` 初始交付，不是 cutover。
 

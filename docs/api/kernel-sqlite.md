@@ -1,6 +1,6 @@
 # kernel-sqlite 内部 Rust API
 
-`rust/crates/kernel-sqlite`是文件型SQLite持久化crate，不是KCP或外部SDK API。当前实现 migration 0001–0010；其中 0010 已建立 Action Lease、Resource Lock 与 Stop Fence 的持久化基座、关系守卫及统一 COMMIT 前闭包，但 acquire/dispatch/release/Stop 命名 owner 尚未实现。
+`rust/crates/kernel-sqlite`是文件型SQLite持久化crate，不是KCP或外部SDK API。当前实现 migration 0001–0010；其中 0010 已建立 Action Lease、Resource Lock 与 Stop Fence 的持久化基座、关系守卫及统一 COMMIT 前闭包，`acquire_lease` / `get_action_lease` owner 已落地，但 dispatch/release/Stop 命名 owner 尚未实现。
 
 ## 打开与migration
 

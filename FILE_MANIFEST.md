@@ -2,8 +2,9 @@
 
 > 非规范元数据。列出 Git source set 中的 Markdown（tracked `git ls-files '*.md'` + 标准 ignore 下 untracked source）；不含 ignored build 产物（如 target/、node_modules/）。行数以 UTF-8 文本 `wc -l` 等价结果为准。由 `scripts/update-file-manifest.mjs` 生成，禁止手改。
 
-- `AGENT.md` — 53 lines
-- `FILE_MANIFEST.md` — 48 lines
+- `AGENT.md` — 54 lines
+- `AGENTS.md` — 21 lines
+- `FILE_MANIFEST.md` — 86 lines
 - `PROJECT_OVERVIEW.md` — 202 lines
 - `README.md` — 41 lines
 - `adr/0001-shittim工作区与工具链.md` — 45 lines
@@ -17,7 +18,32 @@
 - `adr/0009-v2从零构建并取消v1数据迁移.md` — 122 lines
 - `adr/0010-policy-v2终态与未投产旧合同退役.md` — 73 lines
 - `adr/0011-lease生命周期与stop-fence原子语义.md` — 106 lines
+- `adr/AGENTS.md` — 10 lines
 - `adr/README.md` — 30 lines
+- `agent-guide/AGENT.md` — 88 lines
+- `agent-guide/Difficult/dual-repo-sync-Difficult/AGENT.md` — 51 lines
+- `agent-guide/Difficult/kernel-kcp-Difficult/AGENT.md` — 53 lines
+- `agent-guide/Difficult/kernel-sqlite-Difficult/AGENT.md` — 56 lines
+- `agent-guide/Difficult/schema-tool-Difficult/AGENT.md` — 55 lines
+- `agent-guide/Easy/adr-maintenance-Easy/AGENT.md` — 45 lines
+- `agent-guide/Easy/commit-and-push-Easy/AGENT.md` — 63 lines
+- `agent-guide/Easy/docs-maintenance-Easy/AGENT.md` — 55 lines
+- `agent-guide/Medium/domain-policy-Medium/AGENT.md` — 48 lines
+- `agent-guide/Medium/domain-task-Medium/AGENT.md` — 52 lines
+- `agent-guide/Medium/kernel-authorization-Medium/AGENT.md` — 46 lines
+- `agent-guide/Medium/kernel-contracts-Medium/AGENT.md` — 50 lines
+- `agent-guide/Medium/kernel-task-creation-Medium/AGENT.md` — 50 lines
+- `agent-guide/Medium/rust-workspace-Medium/AGENT.md` — 66 lines
+- `agent-guide/Medium/schemas-manifest-Medium/AGENT.md` — 55 lines
+- `agent-guide/Medium/scripts-toolchain-Medium/AGENT.md` — 43 lines
+- `agent-guide/Medium/write-specs-Medium/AGENT.md` — 65 lines
+- `agent-guide/review/AGENT.md` — 45 lines
+- `agent-guide/review/review-code.md` — 64 lines
+- `agent-guide/review/review-contract.md` — 55 lines
+- `agent-guide/review/review-docs.md` — 33 lines
+- `agent-guide/review/review-overview.md` — 64 lines
+- `agent-guide/review/review-release.md` — 46 lines
+- `docs/AGENTS.md` — 10 lines
 - `docs/DEVELOPMENT_HANDOVER.md` — 173 lines
 - `docs/IMPLEMENTATION_MATRIX.md` — 58 lines
 - `docs/PROGRESS.md` — 140 lines
@@ -37,6 +63,18 @@
 - `docs/api/task-repository-contract.md` — 44 lines
 - `docs/design/lease-stop-fence-blueprint.md` — 155 lines
 - `docs/sdk/extension-sdk.md` — 71 lines
+- `rust/AGENTS.md` — 10 lines
+- `rust/crates/domain-policy/AGENTS.md` — 10 lines
+- `rust/crates/domain-task/AGENTS.md` — 10 lines
+- `rust/crates/kernel-authorization/AGENTS.md` — 10 lines
+- `rust/crates/kernel-contracts/AGENTS.md` — 10 lines
+- `rust/crates/kernel-kcp/AGENTS.md` — 10 lines
+- `rust/crates/kernel-sqlite/AGENTS.md` — 10 lines
+- `rust/crates/kernel-task-creation/AGENTS.md` — 10 lines
+- `rust/crates/schema-tool/AGENTS.md` — 10 lines
+- `schemas/AGENTS.md` — 10 lines
+- `scripts/AGENTS.md` — 10 lines
+- `specs/AGENTS.md` — 10 lines
 - `specs/COMPUTER_USE.md` — 863 lines
 - `specs/CONFORMANCE.md` — 696 lines
 - `specs/CORE_ARCHITECTURE.md` — 856 lines
