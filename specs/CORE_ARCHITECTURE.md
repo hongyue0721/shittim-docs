@@ -419,9 +419,8 @@ cancelled
 
 ```text
 pending
-  -> approved  (Policy allow，或关联 ApprovalRecord 的 decision=approved)
+  -> approved  (Policy allow，或可消费的 Approval v2 current resolution decision=approved)
   -> cancelled (Policy deny、Approval v2 current resolution decision=denied，或用户取消)
-  -> pending   (Policy confirm：保持状态并创建/关联Approval v2 chain current request)
 
 approved
   -> leased    (获取租约和锁成功)
@@ -460,6 +459,8 @@ rollback_failed
 cancelled
   -> (terminal)
 ```
+
+> `Policy confirm` 不是状态边：Action 保持 `pending`，只进行绑定 PermissionDecision 与创建/关联 Approval v2 chain current request 的元数据更新（经 `apply_policy_evaluation_outcome` 投影，见 §11.4），不推进状态机节点，也不产生状态变更事件意图。
 
 ### 11.4 关键规则
 

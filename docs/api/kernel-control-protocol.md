@@ -1,6 +1,6 @@
 # Kernel Control Protocol
 
-> 状态：active KCP合同要求method-aware payload version，`task.create` active版本为v2 root-only；Envelope V2 / TaskCreate v2 Schema、generated root types、**production MethodVersionBindings（切片3a）** 与 **kernel-kcp method-aware runtime（切片3b）** 已落地。`V2InitialBuildActive` 完整谓词与可连接 server 仍未完成（五方法无 handler；Publisher/poll 未实现）。字段与行为的唯一事实源是 [`IMPLEMENTATION_CONTRACTS.md` 第5节](../../specs/IMPLEMENTATION_CONTRACTS.md#5-kernel-control-protocol)。
+> 状态：active KCP合同要求method-aware payload version，`task.create` active版本为v2 root-only；Envelope V2 / TaskCreate v2 Schema、generated root types、**production MethodVersionBindings（切片3a）** 与 **kernel-kcp method-aware runtime（切片3b）** 已落地。`stop.activate` / `stop.status` 的 SQLite owner（Stop Fence 激活与只读）与真实远程验签已落地，但可连接 server 仍未完成（五方法无 handler；Publisher/poll 未实现）。字段与行为的唯一事实源是 [`IMPLEMENTATION_CONTRACTS.md` 第5节](../../specs/IMPLEMENTATION_CONTRACTS.md#5-kernel-control-protocol)。
 
 ## 定位
 
@@ -38,7 +38,7 @@ active结构合同使用`KcpCommandEnvelopeV2`=`https://schemas.shittim.local/kc
 | `stop.activate` | Command | 激活 Kernel Stop Fence，并执行 Emergency Stop 的 Kernel 副作用集 | 当前全局 generation |
 | `stop.status` | Query | 只读 | 不适用 |
 
-完整请求/响应payload、排序、cursor与方法专属错误见权威规范。新Child Task只通过父Task Action原子materialization。当前`kernel-sqlite`已实现统一 **v2-only** Outbox（legacy append 已删）及 root `create_root_task_v2`；`kernel-kcp` runtime 已接 method-aware preflight 与 active root create v2 / get / ping。child Action materializer、其余 active producer、Publisher 与 versioned poll 未实现。
+完整请求/响应payload、排序、cursor与方法专属错误见权威规范。新Child Task只通过父Task Action原子materialization。当前`kernel-sqlite`已实现统一 **v2-only** Outbox（legacy append 已删）、root `create_root_task_v2` 与 Lease/Stop Fence 全链 owner（含 `stop.activate` / `stop.status` 的 SQLite owner）；`kernel-kcp` runtime 已接 method-aware preflight 与 active root create v2 / get / ping。child Action materializer、其余 active producer、Publisher 与 versioned poll 未实现。
 
 ## Value preflight 与 registration 合同
 

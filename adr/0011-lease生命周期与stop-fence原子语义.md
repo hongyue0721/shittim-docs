@@ -2,7 +2,7 @@
 
 - 状态：accepted
 - 日期：2026-07-27
-- 实现状态徽章：**partial** — migration 0010 持久化基座与 `acquire_lease` / `get_action_lease` owner 已落地；`begin_dispatch` / `release_or_expire_lease` / `activate_stop_fence` / `get_stop_fence` 未实施。当前进度见 [`docs/IMPLEMENTATION_MATRIX.md`](../docs/IMPLEMENTATION_MATRIX.md) 与 [`docs/PROGRESS.md`](../docs/PROGRESS.md)。
+- 实现状态徽章：**implemented** — migration 0010 持久化基座与 `acquire_lease` / `get_action_lease` / `begin_dispatch` / `release_or_expire_lease` / `activate_stop_fence` / `get_stop_fence` owner 与 Approval 撤销 Lease 全部落地，`approved → leased → in_flight → completed` 端到端可走通。当前进度见 [`docs/IMPLEMENTATION_MATRIX.md`](../docs/IMPLEMENTATION_MATRIX.md) 与 [`docs/PROGRESS.md`](../docs/PROGRESS.md)。
 
 ## 背景
 

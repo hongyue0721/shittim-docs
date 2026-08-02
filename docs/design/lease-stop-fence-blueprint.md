@@ -1,6 +1,6 @@
 # Lease / Stop Fence 持久化实施蓝图（阶段 B，v2）
 
-> 状态：**部分实现**。`domain-task` Lease release effect、generation/intent 合同拆分与 `acquire_lease` / `get_action_lease` 已落地并独立测试；`begin_dispatch` / `release_or_expire_lease` / `activate_stop_fence` / `get_stop_fence` 尚未实现。本文件继续作为剩余 owner 单元的实施依据。
+> 状态：**implemented**。`domain-task` Lease release effect、generation/intent 合同拆分与 `acquire_lease` / `get_action_lease` / `begin_dispatch` / `release_or_expire_lease` / `activate_stop_fence` / `get_stop_fence` 及 Approval invalidation 同事务撤销 Lease 全部落地并独立测试，`approved → leased → in_flight → completed` 端到端可走通；本文件作为历史实施依据保留。
 > v2 说明：按 [ADR-0011](../../adr/0011-lease生命周期与stop-fence原子语义.md) 修订。v1 草稿存在九处与合同冲突的设计（Lease 只在 `leased` 存在、双源未闭合、触发器循环、单列 FK、`max_uses` 收紧无依据、Fence generation 递增、只存 actor id、Stop 副作用降格、动态 allocation 无来源），已全部修正；语义以 ADR-0011 为唯一权威。
 
 ## 1. 为什么这是硬前置
@@ -99,7 +99,7 @@ CREATE TABLE stop_fence (
 - `stop.status` 响应的完整 `Actor` 从 `activated_by_actor_json` 构造；事件 payload 只投影
   `activated_by_actor_id`（Schema 已定）。
 
-## 4. 仓储 API 设计（未实现）
+## 4. 仓储 API 设计（已实现）
 
 编码这些 owner 前必须先闭合两个合同冲突：
 
@@ -125,7 +125,7 @@ CREATE TABLE stop_fence (
 - `reject_unhandled_action_effects` 随之收敛：Lease owner 可消费的 typed effect 不再
   一刀切 fail closed，但仍不开放通用裸迁移入口。
 
-## 5. Approval invalidation 的 Action 侧闭包（单元 5）
+## 5. Approval invalidation 的 Action 侧闭包（单元 5，已实现）
 
 按 ADR-0011 §3，`invalidate_and_optionally_replace` 同事务：
 

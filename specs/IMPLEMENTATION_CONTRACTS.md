@@ -1592,8 +1592,8 @@ ID generator purpose闭集至少包含Task、TaskScope、ContentOrigin、KernelR
 
 | repository | 允许方法 |
 |---|---|
-| Action | `insert_pending`（已实现）、`get`（已实现）、policy binding orchestrator（`evaluate_action_permission` 经 crate-private bridge 原子提交 PD 绑定、Action 状态边与事件，已实现）、approval resolution orchestrator（`resolve_approval_and_commit_action` 在一个 savepoint 内解析 Approval、重新派生 usable proof 并驱动 `pending→approved`，已实现）、lease acquire/dispatch/release orchestrator（`acquire_lease` 已实现，`begin_dispatch` / `release_or_expire_lease` **未实现**，语义见 ADR-0011 §1/§7）、child materializer（**未实现**）、recovery orchestrator（**未实现**）。所有 expected-revision/status CAS 都只是对应业务 owner 内部的私有机械实现细节，不得暴露为平行状态迁移入口 |
-| StopFence | `activate_stop_fence`（v1 原子范围与动态 allocation 见 ADR-0011 §4/§5，**未实现**）、`get_stop_fence`（严格只读，**未实现**）；不提供清除方法 |
+| Action | `insert_pending`（已实现）、`get`（已实现）、policy binding orchestrator（`evaluate_action_permission` 经 crate-private bridge 原子提交 PD 绑定、Action 状态边与事件，已实现）、approval resolution orchestrator（`resolve_approval_and_commit_action` 在一个 savepoint 内解析 Approval、重新派生 usable proof 并驱动 `pending→approved`，已实现）、lease acquire/dispatch/release orchestrator（`acquire_lease` / `begin_dispatch` / `release_or_expire_lease` 已实现，语义见 ADR-0011 §1/§7）、child materializer（**未实现**）、recovery orchestrator（**未实现**）。所有 expected-revision/status CAS 都只是对应业务 owner 内部的私有机械实现细节，不得暴露为平行状态迁移入口 |
+| StopFence | `activate_stop_fence`（v1 原子范围与动态 allocation 见 ADR-0011 §4/§5，已实现）、`get_stop_fence`（严格只读，已实现）；不提供清除方法 |
 | ActionLease | `get_action_lease`（严格只读，与 Action 内联 lease 双源一致校验，已实现）；写路径只能经 Action lease orchestrator，无独立写入口 |
 | PermissionDecision | `append`、`get`、`get_current_for_action`、`validate_current_for_execution`；不可update/delete |
 | Approval | §6.10.1三种head mutation的命名owner、`get_record`、`get_current_head`、`list_history`、`validate_usable_resolution`；不可update/delete；不提供generic request append或legacy v1 production read/migration API |
@@ -2529,7 +2529,7 @@ component DAG保持`policy→[common]`无环；41 retained ownership/source byte
 
 1. **migration 0010**（descriptor v1，`ActionLeaseStopFence` phase set）：schema 阶段创建 `action_leases`、`action_resource_locks` 与单例 `stop_fence`；Rust 关系阶段拒绝任何既有内联 Lease、`leased|in_flight` Action 或非零 `execution_generation`，返回 `reinitialize-required`；guards 阶段建立 stage-then-CAS、双源投影、不可变、no-reinsert、锁归属与 Stop 不可清除守卫。目标对象名预先碰撞时同样拒绝，禁止接管或猜造已有事实。
 2. **统一提交闭包**：每个公开业务 `with_write_transaction` 成功出口在真实 `COMMIT` 前验证 Lease/Stop 关系。无 Lease、Lock、Fence 或 lease-bearing Action 时走空事实快路径；存在执行事实时，Action 内联 Lease 与关系行必须逐字段一致，`resource_refs` 与 Resource Lock 必须双向精确闭合，Stop Fence 下不得残留未收敛的副作用 Lease，且 `foreign_key_check` 必须为空。半 stage、半 delete、Fence 半收敛及锁集合缺失/多余一律回滚。
-3. **职责边界**：SQLite 只验证 Stop Actor JSON 的结构与 `actor_id` 镜像，不伪称实现 RFC 8785；未来 `activate_stop_fence` owner 必须在写入前和事务内 readback 时执行 Schema、typed decode 与 canonical JCS bytes 相等校验。`acquire_lease` / `get_action_lease` 已按 ADR-0011 §7 落地（执行授权从真实 current Task/Action/PD/Approval/资源事实派生，严格读取验证双源一致）；`begin_dispatch`、`release_or_expire_lease`、`activate_stop_fence`、`get_stop_fence` 仍未实现。
+3. **职责边界**：SQLite 只验证 Stop Actor JSON 的结构与 `actor_id` 镜像，不伪称实现 RFC 8785；`activate_stop_fence` owner 已在写入前和事务内 readback 时执行 Schema、typed decode 与 canonical JCS bytes 相等校验。`acquire_lease` / `get_action_lease` / `begin_dispatch` / `release_or_expire_lease` 已按 ADR-0011 §7 落地（执行授权从真实 current Task/Action/PD/Approval/资源事实派生，严格读取验证双源一致）；`activate_stop_fence` / `get_stop_fence` 已落地（单事务 Fence 单例 + `stop_fence.activated` global 事件 + `leased→cancelled`/`in_flight→unknown_side_effect` 分流收敛，动态 allocation 事务内产出并入命令唯一 collector，重复激活幂等 readback）。
 4. **合同前置（已闭合）**：`ActionTransitionIntentV1` 已拆分 pre-CAS / post-CAS generation（`expected_execution_generation` / `resulting_execution_generation`），`acquire_lease` 按 `G→G+1` 落地；Stop Action event 的 causation 继续由同事务持久化 intent 派生，动态 allocator 不另造 causation UUID。
 
 阶段纪律：未满足本谓词前，不得启动可连接server；不得把空bindings或v1内部handler宣传为production可用。失败必须fail closed，不能进入“半迁移/半切换”状态。

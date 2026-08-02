@@ -1,6 +1,6 @@
 # Event Catalog
 
-> 状态徽章：**partial**（Event v2 八 Schema / catalog / typed decode 与 SQLite migration 0003–0010 / 统一 Outbox shape **已实现**；V2InitialBuildActive切片1a又落地AuditRecordV2、AuditAllocationV2与TaskCreationProvenanceV1，明确Audit/Event正交；切片3c 起 production Outbox 为 **v2-only**（`append_legacy_event_v1` / `LegacyV1` 已删，旧库 reinitialize-required）；root `task.created`、`action.state_changed`（causation=`action_transition`）与 `approval.state_changed` active producer 已接入；child producer、Publisher、versioned KCP poll **未实现**）
+> 状态徽章：**partial**（Event v2 八 Schema / catalog / typed decode 与 SQLite migration 0003–0010 / 统一 Outbox shape **已实现**；V2InitialBuildActive切片1a又落地AuditRecordV2、AuditAllocationV2与TaskCreationProvenanceV1，明确Audit/Event正交；切片3c 起 production Outbox 为 **v2-only**（`append_legacy_event_v1` / `LegacyV1` 已删，旧库 reinitialize-required）；root `task.created`、`action.state_changed`（causation=`action_transition`）、`approval.state_changed` 与 `stop_fence.activated`（global aggregate）active producer 已接入；child producer、Publisher、versioned KCP poll **未实现**）
 
 ## 唯一事实源
 

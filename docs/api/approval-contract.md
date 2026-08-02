@@ -1,6 +1,6 @@
 # Approval v2 与 PermissionDecision 授权合同
 
-> 状态徽章：**partial**（Schema、Approval 三种 current-head mutation 的命名 owner、Policy evaluation + initial request 复合入口、resolution + Action 复合入口、`approval.state_changed` producer、Identity credential/challenge/evidence repositories 与顶层命令 UUID 用途闭集已实现；invalidation/replacement 的 Action/Lease 关联撤销和真实远程验签仍未实现；唯一事实源为 [`IMPLEMENTATION_CONTRACTS.md`](../../specs/IMPLEMENTATION_CONTRACTS.md) §6.10 与 [ADR-0007](../../adr/0007-approval-v2不可变联合身份与失效.md)）
+> 状态徽章：**implemented**（Schema、Approval 三种 current-head mutation 的命名 owner、Policy evaluation + initial request 复合入口、resolution + Action 复合入口、`approval.state_changed` producer、Identity credential/challenge/evidence repositories、顶层命令 UUID 用途闭集、invalidation 的 Action/Lease 关联撤销与真实远程验签全部实现；唯一事实源为 [`IMPLEMENTATION_CONTRACTS.md`](../../specs/IMPLEMENTATION_CONTRACTS.md) §6.10 与 [ADR-0007](../../adr/0007-approval-v2不可变联合身份与失效.md)）
 
 ## 唯一事实源
 
@@ -19,9 +19,9 @@
 ## 当前 repository 闭合状态
 
 - `evaluate_action_permission_and_create_approval` 在一个 savepoint 内完成 Policy evaluation、PD/Action current binding 与初始 operation Approval request/head/Audit/Event；caller 只能提供非派生 request facts。
-- `resolve_approval_and_commit_action` 在一个 savepoint 内解析 current request、验证 mode evidence/Challenge、提交 resolution/head/Audit/Event、重新派生 usable proof，并驱动 `pending→approved`；Remote 无可信 verifier 时返回 `ApprovalRequired` 且整事务回滚。
+- `resolve_approval_and_commit_action` 在一个 savepoint 内解析 current request、验证 mode evidence/Challenge（remote 模式经 kernel-authorization Ed25519 RFC8032 pure-mode 端口真实验签，失败 `signature_invalid` 整事务回滚零写入）、提交 resolution/head/Audit/Event、重新派生 usable proof，并驱动 `pending→approved`。
 - 每个顶层 evaluate/create/resolve/resolve-and-commit/invalidate 命令只创建一个 transaction-bound typed UUID collector；command allocations 与该路径实际读取、验证或消费的 persisted Task/Scope/Action/current PD/PolicyRule/request/challenge/evidence/credential 在 matcher、consume 或任何写入前进入同一用途闭集。嵌套 prepare/apply 只能借用该 collector，不能各自验证局部集合。
-- 单独 `resolve` / `invalidate_and_optionally_replace` 尚未闭合 Action/Lease 关联撤销；真实 remote signature 验签尚未实现。因此整体仍是 `partial`，不得称 4c 完成。
+- `invalidate_and_optionally_replace` 已同事务撤销链上 leased Action 的 Lease 并驱动 `leased→cancelled`（approved 不改状态、in_flight 不打断，撤销 transition/event ID 经命令唯一 collector）；`remote_signature` 真实密码学验签已落地。4c 全部 11 项 High 闭合，安全闭环最终验收通过。
 
 ## 已实现的1c-i表面
 

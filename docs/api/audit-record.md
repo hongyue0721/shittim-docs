@@ -1,6 +1,6 @@
 # AuditRecord版本合同
 
-> 状态：AuditRecord v2、AuditAllocationV2与TaskCreationProvenanceV1的source/manifest/generated Rust/conformance已实现；root `task.create`、Policy evaluation、Approval request/resolution/invalidation、Challenge expiry、Credential lifecycle 与 local/system evidence producer 已写入 `AuditRecordV2`。v1 Schema/fixture 仅历史验证；v1 SQLite Store 与 legacy task.create producer 已在切片3c删除（0005 drop 死表，旧库 reinitialize-required）。child materialization、Lease/Stop Fence、Recovery、Provider/ModelCall 等后续 producer 仍未实现。完整wire与producer矩阵唯一事实源为IC §6.16。
+> 状态：AuditRecord v2、AuditAllocationV2与TaskCreationProvenanceV1的source/manifest/generated Rust/conformance已实现；root `task.create`、Policy evaluation、Approval request/resolution/invalidation、Challenge expiry、Credential lifecycle 与 local/system evidence producer 已写入 `AuditRecordV2`。v1 Schema/fixture 仅历史验证；v1 SQLite Store 与 legacy task.create producer 已在切片3c删除（0005 drop 死表，旧库 reinitialize-required）。child materialization、Recovery、Provider/ModelCall 等后续 producer 仍未实现。完整wire与producer矩阵唯一事实源为IC §6.16。
 
 ## v1
 

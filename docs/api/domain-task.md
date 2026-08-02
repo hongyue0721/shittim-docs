@@ -16,11 +16,11 @@
 | 权威转换表 | `specs/CORE_ARCHITECTURE.md` §10（Task）、§11（Action） |
 | 不变量 / 恢复 | `CORE` §10.3 / §11.4 / §12–13；`IMPLEMENTATION_CONTRACTS` §6.3–6.5 / §6.11–6.13 |
 
-`ActionRequest.permission_decision_ref`初建pending可空，首次评估后指向current PermissionDecision v2。Policy confirm时持久层还必须关联Approval v2 chain/current request；当前Rust API中的单一`approval_record_ref`只是legacy字段适配，不能表达request/resolution/invalidation head，后续实现必须升级。
+`ActionRequest.permission_decision_ref`初建pending可空，首次评估后指向current PermissionDecision v2。Policy confirm时持久层关联Approval v2 chain/current request；领域层以`approval_resolution_ref`表达可消费的Approval v2 current resolution（IC §6.5）：非 null 时仅限 `pending→approved` 授权路径消费，且必须同时携带非空`permission_decision_ref`（Schema 不变量），deny/confirm 路径携带则 fail closed。`approval_record_ref` 仅为 legacy v1 适配字段，不表达 request/resolution/invalidation head。
 
-切片4a：`kernel-sqlite` Action transition 与 intent 边合法性**消费**本 crate 的 `is_action_transition_allowed` / `apply_action_transition` 语义，不在 sqlite 内复制状态图。生产状态边由 Policy/Approval/未来 Lease·child·Recovery 命名 owner 验证 typed authority fact，再通过 crate-internal mechanical commit 调用 `apply_action_transition` 并消费 outcome 中的 `ActionEventIntent` 投影 `action.state_changed` payload 的 from/to/revision 字段（`reason_code` 仍以 immutable intent 为准）；不存在通用 production 状态迁移入口。domain outcome 若要求 lease/lock release effects，在 lease API 落地前由 repository **fail closed**。持久化 CAS、Outbox 与 intent 唯一键由 repository 拥有；本 crate 仍不写存储。
+切片4a：`kernel-sqlite` Action transition 与 intent 边合法性**消费**本 crate 的 `is_action_transition_allowed` / `apply_action_transition` 语义，不在 sqlite 内复制状态图。生产状态边由 Policy/Approval/未来 Lease·child·Recovery 命名 owner 验证 typed authority fact，再通过 crate-internal mechanical commit 调用 `apply_action_transition` 并消费 outcome 中的 `ActionEventIntent` 投影 `action.state_changed` payload 的 from/to/revision/`approval_resolution_ref` 字段（`reason_code` 仍以 immutable intent 为准）；不存在通用 production 状态迁移入口。domain outcome 若要求 lease/lock release effects，在 lease API 落地前由 repository **fail closed**。持久化 CAS、Outbox 与 intent 唯一键由 repository 拥有；本 crate 仍不写存储。
 
-`PolicyEvaluationOutcome`及其`approval_record_ref`是legacy Rust v1适配对象；active v2 API必须以`approval_chain_id`和可消费`approval_resolution_ref`表达，禁止继续创建deferred ApprovalRecord。下面示例仅用于当前crate回归，不是active wire/domain shape。
+`PolicyEvaluationOutcome`的`approval_record_ref`是legacy v1适配字段；active v2 以可消费`approval_resolution_ref`表达（IC §6.5）：effect=Allow 且 `approval_resolution_ref` 非 null 表示 confirmation 要求已由可消费的 Approval v2 current resolution 满足，走 `pending→approved`；Deny/Confirm 携带 resolution 直接 fail closed。禁止继续创建 deferred ApprovalRecord。
 
 ### Task
 
@@ -79,7 +79,8 @@ let out = apply_policy_evaluation_outcome(
     &PolicyEvaluationOutcome {
         effect: PolicyEvaluationEffect::Confirm,
         permission_decision_ref: "pd-…".into(),
-        approval_record_ref: Some("ar-deferred-…".into()), // legacy v1 current crate only
+        approval_record_ref: Some("ar-deferred-…".into()), // legacy v1 适配字段
+        approval_resolution_ref: None, // v2：confirm 保持 pending，不消费 resolution
         reason: "matched confirm rule".into(),
     },
 )?;
@@ -96,7 +97,7 @@ let out = apply_policy_evaluation_outcome(
 - Lease 在 `leased | in_flight` 两个状态持续存在。所有离开 Lease-bearing 状态的六条边都会产生 `LeaseReleaseEffect`：`leased -> approved | cancelled | unknown_side_effect` 与 `in_flight -> completed | failed | unknown_side_effect`；`leased -> in_flight` 不释放；
 - `LeaseReleaseEffect.reason` 是封闭的 `LeaseReleaseReason` 枚举，不是自由字符串。持久层必须消费 typed effect，不得重新解析 transition reason 猜测释放语义。
 
-**每次成功领域更新**（含 confirm）`revision + 1`；confirm 仅 status 不变且无 status event intent。领域层只声明原子 Lease/锁效果；当前 SQLite owner 尚未落地，因此 repository 仍对这些效果失败关闭。
+**每次成功领域更新**（含 confirm）`revision + 1`；confirm 仅 status 不变且无 status event intent。领域层只声明原子 Lease/锁效果；SQLite 侧已由 Lease 全链 owner 消费（`begin_dispatch` / `release_or_expire_lease` 经 `LeaseCommitProjection::Clear` 消费 typed effect，Stop owner 与 Approval 撤销复用同一路径），不再失败关闭。
 
 ### Recovery / Compensation
 

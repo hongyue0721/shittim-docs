@@ -73,7 +73,7 @@ fn normalize_inputs(value: &str, pattern: &str) -> Result<(String, String), Poli
 - `normalize_uri(&str)`：规范化一条普通 URI；任何 glob token 都返回 `PolicyErrorCode::InvalidUriPattern`。
 - `normalize_uri_pattern(&str)`：规范化一条 URI pattern；只允许 path 中完整 segment `*` / `**`，query/fragment 仍为精确字符串，scheme/authority 不允许 glob。
 - 两者都执行 scheme/host 小写、默认端口移除、dot segments 消解、百分号十六进制大写、RFC 8089 `file:` 校验与 Windows drive 大写；反斜杠和非法 authority 均 fail closed。
-- API 故意只处理单项，不提供数组 normalizer；调用方负责保持数组顺序与重复项，并决定错误如何归属。当前仅 legacy v1 `task.create` repository 已按契约逐项调用；active v2 尚未接入该 repository。
+- API 故意只处理单项，不提供数组 normalizer；调用方负责保持数组顺序与重复项，并决定错误如何归属。legacy v1 `task.create` repository 已按 ADR-0009 删除（切片 3c），当前调用点全在 active v2 路径：`kernel-task-creation` 的 root/child proposal normalization 逐项调用并带 index 错误归属（`normalization.rs`）、`kernel-sqlite` 评估编排/Approval subject 绑定/Lease 资源规范化逐项调用（`permission_decision.rs`、`approval.rs`、`lease.rs`）、`kernel-authorization` child delta 调用 `normalize_uri_pattern`（`child_delta.rs`）。
 
 ## TaskScope resource containment
 
@@ -115,7 +115,7 @@ fn check(
 
 - `time_window`：IANA timezone、weekday、本地半开区间、跨午夜、start=end 全天；UTC instant 经 chrono-tz 投影，DST 不猜偏移。
 - `delegation_required` / `local_presence_required`：true 与 false 都是精确条件。
-- 未知 condition 可用 `parse_policy_rule_json` 在 typed decode 前识别，返回 `unsupported_policy_condition`。
+- 未知 condition 可用 `parse_policy_rule_v2_json` 在 typed decode 前识别，返回 `unsupported_policy_condition`。
 - timezone、时间、重复 weekday、rate-limit scope 所需事实缺失等语义异常同样 fail closed，不变成未匹配。
 
 ## RateLimitPort 与原子消费

@@ -6,9 +6,10 @@
 
 - **主仓库**：<https://github.com/hongyue0721/shittim>（`master`）
 - **文档镜像仓库**：<https://github.com/hongyue0721/shittim-docs>
-- **本轮代码验收基线**：`18b03f1`（migration 0010 Lease/Stop Fence 持久化基座；独立 Gemini GO）；继续开发时以已推送的 `origin/master` 为准，并要求工作树干净。
-- **下一实现任务**：`begin_dispatch` / `release_or_expire_lease` 消费 typed Lease effect，随后 Stop Fence owner（`activate_stop_fence` / `get_stop_fence`）与 4c 清零（Approval invalidation 同事务撤销 Lease、真实远程验签）；再进入切片 5（migration 0011 child materializer）与 §13.7。generation/intent 合同冲突已闭合、`acquire_lease` / `get_action_lease` 已落地，不得重复实现。
+- **本轮代码验收基线**：`e53c9ef`（已推送 `origin/master`）；继续开发时以已推送的 `origin/master` 为准，并要求工作树干净。本地另有已提交待推送切片：`domain-task` Approval v2 resolution 领域表达（`222e32f` 起 4 个功能域提交）与 Lease/Stop Fence 并发切片（`begin_dispatch` / `release_or_expire_lease` 本地已实现、未提交）。
+- **下一实现任务**：切片 5（migration 0011 child materializer）与 §13.7 谓词闭合。Lease/Stop Fence 全链（`acquire_lease` / `get_action_lease` / `begin_dispatch` / `release_or_expire_lease` / `activate_stop_fence` / `get_stop_fence`）与 4c 清零（Approval invalidation 同事务撤销 Lease、真实远程验签）均已落地，不得重复实现。
 - **同步状态**：主仓 push 与文档镜像 receipt 由 `scripts/sync-docs-repository.mjs` 校验；不得在文档中维护会随一次 push 立即失真的“领先提交数”。
+- **domain-task 领域层**：Approval v2 resolution 领域表达已落地（`approval_resolution_ref` 仅限 `pending→approved` 消费且要求 `permission_decision_ref` 非空，deny/confirm 携带 fail closed；CORE §11.3 已明确 confirm 非状态边）；kernel-sqlite 侧对接领域 `approval_resolution_ref`（当前用自己的 intent 字段投影 payload）为后续挂账项。
 - **里程碑 `V2InitialBuildActive`（ADR-0009）** 已完成或部分完成切片：
   0 规范手术；1a root v2 持久对象 Schema×4；1b Action/child Schema×5 + `kernel-authorization` 纯库；1c-i 授权核心五 Schema；1c-ii 身份/挑战/证据八 Schema；2 root TaskCreate v2 仓库/migration 0004；3a production MethodVersionBindings 八方法集；3b KCP 切 active v2 删 v1 路径；3c sqlite v1 写路径删除/v2-only Outbox/旧库 reinitialize-required 拒绝；4a Action 仓库+`action.state_changed`/migration 0006；4b PolicyRule+PermissionDecision 仓库+评估编排/migration 0007；4c Approval/Identity 结构与 9/11 High 已闭合（migration 0008），仍属部分完成。
 - **测试基线（主会话实测）**：`kernel-sqlite` 155；全工作区测试绿；`cargo clippy --workspace --all-targets -- -D warnings` 绿；`./scripts/check-schema.sh` 全量门绿。后续改动后以实际测试输出更新，不得预写猜测数量。
@@ -63,11 +64,11 @@
 ### 4.1 实施单元与提交顺序
 
 1. **单元 1（已完成，`18b03f1`）**：migration 0010 三表、descriptor/关系校验、CAS/不可变守卫、`max_uses=1` 生成链与统一业务 COMMIT 前关系闭包；独立 Gemini GO（0C/0H/0M/1L）。
-2. **单元 2 前置合同（下一步）**：解决 `ActionTransitionIntentV1.execution_generation` 在 acquire 边同时承担 pre-CAS 与 post-CAS generation 的矛盾，并明确 Stop causation 是持久 intent 的同一事实 alias，不是动态 allocator 的独立 UUID。
-3. **单元 2 owner**：`acquire_lease` / `get_action_lease`（`approved → leased` + 严格只读）已按 ADR-0011 §7 协议落地；`begin_dispatch` / `release_or_expire_lease` / `Stop activate/read` 待后续单元完成。
-4. **单元 3**：`begin_dispatch` / `release_or_expire_lease`，消费 `domain-task` 已完成的封闭 `LeaseReleaseReason` / `LeaseReleaseEffect`。
-5. **单元 4**：`activate_stop_fence` / `get_stop_fence`；v1 原子范围 + transaction-bound allocation source + canonical Actor 快照。
-6. **单元 5**：4c 清零——Approval invalidation/replacement 同事务按 ADR-0011 §3 分流 Action。
+2. **单元 2 前置合同（已完成）**：`ActionTransitionIntentV1.execution_generation` 已拆分为 `expected_execution_generation` / `resulting_execution_generation` 支持 acquire 的 `G→G+1`；Stop causation 是持久 intent 的同一事实 alias，不是动态 allocator 的独立 UUID。
+3. **单元 2 owner（已完成）**：`acquire_lease` / `get_action_lease`（`approved → leased` + 严格只读）已按 ADR-0011 §7 协议落地。
+4. **单元 3（已完成）**：`begin_dispatch` / `release_or_expire_lease` 已落地，消费 `domain-task` 的封闭 `LeaseReleaseReason` / `LeaseReleaseEffect`（`LeaseCommitProjection::Clear` 先删 Lease 级联删锁再 CAS 离开 lease-bearing 状态）。
+5. **单元 4（已完成）**：`activate_stop_fence` / `get_stop_fence` 已落地；v1 原子范围 + transaction-bound allocation source + canonical Actor 快照。
+6. **单元 5（已完成）**：4c 清零——Approval invalidation/replacement 同事务按 ADR-0011 §3 分流 Action（leased 撤销 Lease 驱动 `leased→cancelled`，approved 不动、in_flight 不打断）。
 
 并行线：Ed25519 `RemoteSignatureVerifier`（ADR-0011 §10），在 4c 最终验收前合流。
 
