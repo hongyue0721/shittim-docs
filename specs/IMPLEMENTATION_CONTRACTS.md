@@ -871,7 +871,7 @@ Extension RPC 是 agentd 与 Extension/Provider 进程之间的协议，不在�
 
 ### 5.10 `system.ping` / active root `task.create` v2 / `task.get` typed application handler
 
-**切片3c起代码事实**：`kernel-kcp` 三个 registered handler 为 `system.ping`（retained v1 query）、active root-only `task.create` v2、`task.get`（retained v1 query）。v1 create 不再进入 preflight Accepted / registration / handler；production 请求携带 create v1 仅得 `unsupported_schema_version`。kcp 侧 v1 create handler/adapter/ports 路径已删除。`kernel-sqlite` 的 legacy `create_task` / `append_legacy_event_v1` / `StoredEventEnvelope::LegacyV1` 已删除；Outbox production API 为 v2-only；`SqliteStore::open` 对 v1 业务数据标记返回稳定 `stored_data_invalid` + `reinitialize-required:` 诊断。
+**切片3c起代码事实**：`kernel-kcp` 五个 registered handler 为 `system.ping`（retained v1 query）、active root-only `task.create` v2、`task.get`（retained v1 query）、`stop.activate`（retained v1 command）、`stop.status`（retained v1 query）。v1 create 不再进入 preflight Accepted / registration / handler；production 请求携带 create v1 仅得 `unsupported_schema_version`。kcp 侧 v1 create handler/adapter/ports 路径已删除。`kernel-sqlite` 的 legacy `create_task` / `append_legacy_event_v1` / `StoredEventEnvelope::LegacyV1` 已删除；Outbox production API 为 v2-only；`SqliteStore::open` 对 v1 业务数据标记返回稳定 `stored_data_invalid` + `reinitialize-required:` 诊断。
 
 本节的 response 门、clock/ID/backend 分层是 active 实现必须遵循的原则，不能复制平行栈。公共 `handle_*` 在 family/discriminator/payload variant 错配时本地 `InputMethodMismatch`；handler 不得接受 raw JSON 或 transport frame，也不得把内部错误伪装成 `invalid_request`（root-only 的 Envelope `task_id`/`expected_revision` 非 null 除外，固定映射 `invalid_request`）。
 
@@ -983,7 +983,7 @@ UUID版本不由任何合同固定：generator必须返回满足对应Schema `fo
 
 | handler 条件 / backend 分类 | KCP `code` | 固定 `message` | `retryable` |
 |---|---|---|---:|
-| 三方法入口或完成检查到期 | `deadline_exceeded` | `request deadline exceeded` | `true` |
+| 注册方法入口或完成检查到期 | `deadline_exceeded` | `request deadline exceeded` | `true` |
 | `task.get` 返回 `None` | `task_not_found` | `task was not found` | `false` |
 | `InvalidScopePattern` | `invalid_scope_pattern` | `task scope contains an invalid URI pattern` | `false` |
 | `IdempotencyConflict` | `idempotency_conflict` | `idempotency key was used for different task facts` | `false` |
@@ -999,9 +999,9 @@ UUID版本不由任何合同固定：generator必须返回满足对应Schema `fo
 
 #### 5.10.6 阶段门
 
-三个 typed handler 与第 5.11 节的 Value preflight/注册式 dispatcher 都只能作为不可连接的库级边界。UTF-8、JSON parse、bytes/frame、最大尺寸、transport path/pipe name、连接 ACL/credentials 和 server 生命周期未关闭前，不得提供可连接 Socket/Named Pipe server。五个已知但未注册方法没有正式 handler 时，不得把它们描述为可用，也不得用 `method_unavailable`、`unsupported_method` 或任一 wire error 掩盖实现缺口。
+三个 typed handler 与第 5.11 节的 Value preflight/注册式 dispatcher 都只能作为不可连接的库级边界。UTF-8、JSON parse、bytes/frame、最大尺寸、transport path/pipe name、连接 ACL/credentials 和 server 生命周期未关闭前，不得提供可连接 Socket/Named Pipe server。三个已知但未注册方法没有正式 handler 时，不得把它们描述为可用，也不得用 `method_unavailable`、`unsupported_method` 或任一 wire error 掩盖实现缺口。
 
-### 5.11 `serde_json::Value` preflight 与三方法注册式 dispatcher
+### 5.11 `serde_json::Value` preflight 与五方法注册式 dispatcher
 
 本节闭合不可连接的库级 raw-value 边界：唯一输入是调用方已经解析得到的 `serde_json::Value`。bytes、UTF-8、JSON parse、4-byte frame、最大尺寸、transport、clock、backend 与 Kernel ID 均不在本层。实现必须公开分步 API `preflight_value -> narrow_to_registered -> TypedDispatcher.dispatch`；不得提供名为 `process_value` 或语义等价的一站式 API，使调用方误以为首批八方法都已可执行。建议将该边界直接加入现有 `kernel-kcp` crate，复用其 handler/ports/response 门；如因依赖方向拆分 module/crate，也不得复制 response 构造、Catalog 或 typed handler abstraction。
 
@@ -1045,23 +1045,23 @@ KnownCatalogMethodNotImplemented =
   | TaskList
   | EventSubscribe
   | EventPoll
-  | StopActivate
-  | StopStatus
 
 RegisteredRequest =
   | SystemPing(TypedKcpQueryEnvelope)
   | TaskCreate(TaskCreateCommandRequestV2)   // active root-only v2; not TypedKcpCommandEnvelopeV2
   | TaskGet(TypedKcpQueryEnvelope)
+  | StopActivate(TypedKcpCommandEnvelope)    // retained active v1 command
+  | StopStatus(TypedKcpQueryEnvelope)
 
-TypedDispatcher::new(clock, ids, task_backend)
+TypedDispatcher::new(clock, ids, task_backend, stop_backend)
 TypedDispatcher.dispatch(request: RegisteredRequest) -> HandlerResult
 ```
 
-名称可按 Rust 社区惯例微调，但三步边界、结果分类和所有权不得合并。`TypedCatalogRequest` 必须携带 generated typed Envelope，不能退回 `Value`、手写 payload 或只保留 method string。`RegisteredRequest`的目标active集合仍为`system.ping`、`task.create`、`task.get`，但`task.create` variant必须是v2。当前代码中的v1 variant仅legacy实现，active narrow不得构造。
+名称可按 Rust 社区惯例微调，但三步边界、结果分类和所有权不得合并。`TypedCatalogRequest` 必须携带 generated typed Envelope，不能退回 `Value`、手写 payload 或只保留 method string。`RegisteredRequest`的目标active集合为`system.ping`、`task.create`、`task.get`、`stop.activate`、`stop.status`，但`task.create` variant必须是v2（`stop.activate` 为 retained active v1 command envelope）。当前代码中的v1 variant仅legacy实现，active narrow不得构造。
 
-`KnownCatalogMethodNotImplemented` 只用于已通过完整 Schema 与 generated typed decode 的 `task.list`、`event.subscribe`、`event.poll`、`stop.activate`、`stop.status`。它是本地库结果，不是 `KcpError`，不得实现 `Serialize`，不得进入 Response Envelope，也不得转换为 `unsupported_method`、`method_unavailable` 或 `internal_error`。组合根在这五个方法拥有正式 handler 前必须 fail closed 且禁止启动 KCP server；不能接收请求后再用本地缺口冒充协议错误。`InternalContractViolation` 是主动 method-aware preflight 绝不可能产出的内部合同失败身份（当前唯一值 `TaskCreateV1AfterActivePreflight`：typed `task.create` v1 经构造旁路到达 narrowing）；它同样是本地库结果，不得实现 `Serialize`，不得冒充任何 Catalog 方法或 wire error。
+`KnownCatalogMethodNotImplemented` 只用于已通过完整 Schema 与 generated typed decode 的 `task.list`、`event.subscribe`、`event.poll`。它是本地库结果，不是 `KcpError`，不得实现 `Serialize`，不得进入 Response Envelope，也不得转换为 `unsupported_method`、`method_unavailable` 或 `internal_error`。组合根在这三个方法拥有正式 handler 前必须 fail closed 且禁止启动 KCP server；不能接收请求后再用本地缺口冒充协议错误。`InternalContractViolation` 是主动 method-aware preflight 绝不可能产出的内部合同失败身份（当前唯一值 `TaskCreateV1AfterActivePreflight`：typed `task.create` v1 经构造旁路到达 narrowing）；它同样是本地库结果，不得实现 `Serialize`，不得冒充任何 Catalog 方法或 wire error。
 
-`TypedDispatcher` 是显式三方法注册表，不是按字符串开放反射的 router。它在构造时接收第 5.10 节已有的 `KernelClock`、`KernelIdGenerator` 与 `TaskApplicationBackend` 引用/所有权；dispatch 时按 variant 只把所需端口传给对应 handler：ping 使用 clock，create 使用 clock/ids/backend，get 使用 clock/backend。它只把三个 `RegisteredRequest` variant 路由到第 5.10 节对应 handler；不得重复 Schema、protocol/auth/method、payload version 或 deadline 检查，不得改写 handler 的 `HandlerResult`，并必须无损保留 `post_commit_notification_intents`。不得为 dispatcher 创造平行 clock/backend/ID 接口。新增注册方法必须同时增加正式 handler、注册 variant、dispatcher 路由、Conformance 与 server 阶段门更新。
+`TypedDispatcher` 是显式五方法注册表，不是按字符串开放反射的 router。它在构造时接收第 5.10 节已有的 `KernelClock`、`KernelIdGenerator`、`TaskApplicationBackend` 与 `StopApplicationBackend` 引用/所有权；dispatch 时按 variant 只把所需端口传给对应 handler：ping 使用 clock，create 使用 clock/ids/backend，get 使用 clock/backend，stop.activate 使用 clock/ids/stop_backend，stop.status 使用 clock/stop_backend。它只把五个 `RegisteredRequest` variant 路由到第 5.10 节对应 handler；不得重复 Schema、protocol/auth/method、payload version 或 deadline 检查，不得改写 handler 的 `HandlerResult`，并必须无损保留 `post_commit_notification_intents`。不得为 dispatcher 创造平行 clock/backend/ID 接口。新增注册方法必须同时增加正式 handler、注册 variant、dispatcher 路由、Conformance 与 server 阶段门更新。
 
 #### 5.11.2 固定判定优先级
 
@@ -1141,7 +1141,7 @@ preflight 不得按 `ContractError` 的显示文本、JSON Schema 错误字符�
 
 #### 5.11.5 阶段门与非目标
 
-本节不改变 ADR-0003 的 transport 决策，也不实现 bytes/UTF-8/JSON parse/frame、连接身份、server、clock、deadline、backend、ID 或五个缺失 handler。preflight 只建立“可关联并完整 typed”的请求事实；deadline 仍由三个 registered typed handler 按第 5.10 节检查。首批八方法的 Schema/Catalog 承诺与“当前只有三方法可执行”必须同时真实表达，禁止以技术兜底制造看似可用但 dispatcher/handler 关系不一致的 server。
+本节不改变 ADR-0003 的 transport 决策，也不实现 bytes/UTF-8/JSON parse/frame、连接身份、server、clock、deadline、backend、ID 或三个缺失 handler。preflight 只建立“可关联并完整 typed”的请求事实；deadline 仍由五个 registered typed handler 按第 5.10 节检查。首批八方法的 Schema/Catalog 承诺与“当前五方法可执行、三方法未注册”必须同时真实表达，禁止以技术兜底制造看似可用但 dispatcher/handler 关系不一致的 server。
 
 ## 6. 参考逻辑对象
 

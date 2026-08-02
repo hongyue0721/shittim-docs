@@ -38,7 +38,7 @@
 - 修改前读取本文件及相关 spec，先找既有状态所有者；修改后更新测试并运行规定检查。影响新常驻进程、核心协议、状态所有者、Core 边界或特权 Action 时写 ADR。
 - **文档随实现持续更新**：代码、Schema、协议、错误、状态或完成度变化时，必须在同一切片主动更新 `docs/PROGRESS.md`、实现矩阵和相关 API/SDK/ADR/Conformance 文档；文档仍描述旧事实时，切片不得视为完成。
 - **双仓库发布闭环**：主仓 `hongyue0721/shittim` 是唯一权威源。主仓验收、提交、推送并核对远端 SHA 后，必须从该已推送提交同步纯文档镜像 `hongyue0721/shittim-docs`；镜像不得独立演化或包含实现、Schema、构建产物和敏感文件。两仓同步与远端验证完成前不得报告任务完成。完整流程见 `docs/REPOSITORY_MAINTENANCE.md`。
-- **本阶段编译/测试运行时目录**：在本主机执行编译或本阶段测试时，运行命令必须显式设置 `TMPDIR`（以及 Rust 的 `CARGO_TARGET_DIR`）到**可写目录**（推荐仓库外或已 gitignore 的目录，例如 `$HOME/.cache/shittim-build-tmp` 与本机 `rust/target`），禁止依赖系统默认临时目录的可用性、禁止写死单一 host 路径；这是维护者/Agent 的运行约定，不是“全 workspace 禁止 `/tmp`”的库内硬门。Rust 库与测试应继续通过 `TMPDIR`/`std::env::temp_dir`/`tempfile` 等标准抽象取临时目录，不得硬编码 host path。双仓 sync 工具及其 Node 测试的固定 `/mnt/data/...` temp 路径合同见 `docs/REPOSITORY_MAINTENANCE.md` §6.1，范围仅限该工具链。
+- **本阶段编译/测试运行时目录**：在本主机执行编译或本阶段测试时，运行命令必须显式设置 `TMPDIR`（以及 Rust 的 `CARGO_TARGET_DIR`）到**可写目录**（推荐仓库外或已 gitignore 的目录，例如 `$HOME/.cache/shittim-build-tmp` 与本机 `rust/target`），禁止依赖系统默认临时目录的可用性、禁止写死单一 host 路径；这是维护者/Agent 的运行约定，不是“全 workspace 禁止 `/tmp`”的库内硬门。Rust 库与测试应继续通过 `TMPDIR`/`std::env::temp_dir`/`tempfile` 等标准抽象取临时目录，不得硬编码 host path。双仓 sync 工具及其 Node 测试同样由 `TMPDIR` 派生临时目录（未设置或指向 `/tmp` 时 fail closed），合同细节见 `docs/REPOSITORY_MAINTENANCE.md` §6.1，范围仅限该工具链。
 - **提交身份硬门（双仓）**：local `user.name`/`user.email` 与 commit author/committer 的 name/email 必须分别为 `小岳` / `2933634892@qq.com`；sync 工具以 `source_identity` / `docs_identity` 结构化失败，不得只校验邮箱。
 
 ## 4. 完成条件

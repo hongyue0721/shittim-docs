@@ -41,7 +41,7 @@ Official fixtures：`schemas/fixtures/policy/subject_projection.v1.json`三branc
 - `LocalPresenceEvidenceV1` / `SystemAuthenticationEvidenceV1`：本地/OS 证据 wire；local 不复制 subject_hash，system `result=verified`；
 - `RemoteApprovalResponseV1` / `RemoteApprovalSignaturePreimageV1`：响应与签名 preimage；response 禁止 expires_at/public_key 覆盖。
 
-Official fixtures：`schemas/fixtures/policy/{remote_signature_algorithm,credential_ref,remote_approval_challenge,system_authentication_challenge,local_presence_evidence,system_authentication_evidence,remote_approval_response,remote_approval_signature_preimage}.v1.json`。preimage 额外保存 JCS UTF-8 hex 与 SHA-256。本片只证明 Schema/typed shape 与 fixture 向量，不宣称 repository CAS、TTL 相对时间、nonce CSPRNG 或真实验签已实现。
+Official fixtures：`schemas/fixtures/policy/{remote_signature_algorithm,credential_ref,remote_approval_challenge,system_authentication_challenge,local_presence_evidence,system_authentication_evidence,remote_approval_response,remote_approval_signature_preimage}.v1.json`。preimage 额外保存 JCS UTF-8 hex 与 SHA-256。repository CAS 与真实验签已实现（见上「当前 repository 闭合状态」）；TTL 相对时间与 nonce CSPRNG 不属本切片验收范围。
 
 ## 范围
 

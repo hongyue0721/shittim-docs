@@ -4,7 +4,7 @@
 
 - `AGENT.md` — 54 lines
 - `AGENTS.md` — 21 lines
-- `FILE_MANIFEST.md` — 86 lines
+- `FILE_MANIFEST.md` — 88 lines
 - `PROJECT_OVERVIEW.md` — 202 lines
 - `README.md` — 41 lines
 - `adr/0001-shittim工作区与工具链.md` — 45 lines
@@ -45,8 +45,8 @@
 - `agent-guide/review/review-release.md` — 46 lines
 - `docs/AGENTS.md` — 10 lines
 - `docs/DEVELOPMENT_HANDOVER.md` — 174 lines
-- `docs/IMPLEMENTATION_MATRIX.md` — 58 lines
-- `docs/PROGRESS.md` — 138 lines
+- `docs/IMPLEMENTATION_MATRIX.md` — 1 lines
+- `docs/PROGRESS.md` — 150 lines
 - `docs/REPOSITORY_MAINTENANCE.md` — 160 lines
 - `docs/api/README.md` — 41 lines
 - `docs/api/approval-contract.md` — 55 lines
@@ -55,13 +55,15 @@
 - `docs/api/domain-task.md` — 127 lines
 - `docs/api/error-catalog.md` — 22 lines
 - `docs/api/event-catalog.md` — 28 lines
-- `docs/api/kcp-preflight-dispatcher.md` — 95 lines
+- `docs/api/kcp-preflight-dispatcher.md` — 97 lines
+- `docs/api/kernel-authorization.md` — 60 lines
 - `docs/api/kernel-control-protocol.md` — 90 lines
-- `docs/api/kernel-kcp.md` — 73 lines
-- `docs/api/kernel-sqlite.md` — 226 lines
+- `docs/api/kernel-kcp.md` — 82 lines
+- `docs/api/kernel-sqlite.md` — 240 lines
 - `docs/api/schema-generation.md` — 121 lines
 - `docs/api/task-repository-contract.md` — 44 lines
 - `docs/design/lease-stop-fence-blueprint.md` — 155 lines
+- `docs/design/task-create-idempotency-decision-input.md` — 84 lines
 - `docs/sdk/extension-sdk.md` — 71 lines
 - `rust/AGENTS.md` — 10 lines
 - `rust/crates/domain-policy/AGENTS.md` — 10 lines

@@ -32,8 +32,8 @@
 
 ## 已知漂移高危点（修改文档前先核对）
 
-- `kernel-sqlite` 的 Lease：`acquire_lease` / `get_action_lease` **已实现**，`begin_dispatch` / `release_or_expire_lease` / `activate_stop_fence` / `get_stop_fence` **未实现**——任何写「Lease 未实现」或「全部实现」的表述都要按这个事实改写。
-- 切片 4c：原 11 项 High 已闭合 9 项，剩「Approval invalidation 同事务撤销 Lease」「真实远程验签」2 项——写「4c 完成」是错的。
+- `kernel-sqlite` 的 Lease/Stop Fence：`acquire_lease` / `get_action_lease` / `begin_dispatch` / `release_or_expire_lease` / `activate_stop_fence` / `get_stop_fence` **全部已实现**（c11d3be）——任何写「Lease owner 未实现」的表述都要按这个事实改写。
+- 切片 4c：11/11 High 已随 c11d3be 闭合（Approval invalidation 同事务撤销 Lease + 真实远程验签）——写「4c 未完成/剩 2 项」是错的。
 - 五方法 handler（`task.list` / `event.subscribe` / `event.poll` / `stop.activate` / `stop.status`）**无正式 handler**，KCP 不可连接 server。
 - Node 入口：`~/.local/share/pnpm/bin`（不是 `~/.local/share/pnpm/node`，也不是默认系统 node）。
 - 已知未裁决偏差（root 重放 request_id、时钟精度、invalid_scope_pattern details 丢失、success criteria trim）不是「已修复事实」，文档不得写成已修复。

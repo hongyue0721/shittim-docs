@@ -16,7 +16,7 @@
 
 文件型 SQLite 持久化、migration、事务、repository、统一 v2 Outbox 存储与命名业务 owner 的原子编排；**不拥有** KCP、`agentd`、网络传输、Publisher loop。
 
-**开工前核对点（勿凭记忆）**：当前已实现 owner（含 `acquire_lease` / `get_action_lease`）、未实现 owner（`begin_dispatch` / `release_or_expire_lease` / `activate_stop_fence` / `get_stop_fence` / child materializer / recovery orchestrator）、4c 剩余 2 项 High——一律以 MATRIX/PROGRESS 与源码为准。
+**开工前核对点（勿凭记忆）**：当前已实现 owner（`acquire_lease` / `get_action_lease` / `begin_dispatch` / `release_or_expire_lease` / `activate_stop_fence` / `get_stop_fence`，c11d3be 起全链落地；Approval 撤销 Lease 与真实远程验签已随 4c 清零）、未实现 owner（child materializer / recovery orchestrator）——一律以 MATRIX/PROGRESS 与源码为准。
 
 ## 硬性规则
 

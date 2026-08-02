@@ -1,6 +1,6 @@
 # kernel-sqlite 内部 Rust API
 
-`rust/crates/kernel-sqlite`是文件型SQLite持久化crate，不是KCP或外部SDK API。当前实现 migration 0001–0010；其中 0010 已建立 Action Lease、Resource Lock 与 Stop Fence 的持久化基座、关系守卫及统一 COMMIT 前闭包，Lease 全链 owner（`acquire_lease` / `get_action_lease` / `begin_dispatch` / `release_or_expire_lease` / `activate_stop_fence` / `get_stop_fence`）与 Approval 撤销 Lease、真实远程验签均已落地。
+`rust/crates/kernel-sqlite`是文件型SQLite持久化crate，不是KCP或外部SDK API。当前实现 migration 0001–0011；其中 0010 已建立 Action Lease、Resource Lock 与 Stop Fence 的持久化基座、关系守卫及统一 COMMIT 前闭包，Lease 全链 owner（`acquire_lease` / `get_action_lease` / `begin_dispatch` / `release_or_expire_lease` / `activate_stop_fence` / `get_stop_fence`）与 Approval 撤销 Lease、真实远程验签均已落地；0011 建立 child materializer 持久化基座（`verification_results` / `child_materializations`，mapping 五钉闭包 FK）。
 
 ## 打开与migration
 
@@ -11,6 +11,7 @@ let store = SqliteStore::open("/var/lib/shittim/kernel.sqlite3", config)?;
 
 - 只接受普通文件路径；拒绝空路径、`:memory:`及`file:` URI。
 - 每个连接验证`foreign_keys=ON`、显式非零`busy_timeout`与WAL。
+- 并发首次打开同一新文件：`SqliteStore::open` 对 `SqliteBusy` 在 3×`busy_timeout` 窗口内整体重试（经 `config::retry_on_busy` 辅助）。WAL 引导、外键与迁移均可幂等重跑，重试不会重复迁移；窗口耗尽仍以 `SqliteBusy` 在源头暴露，非 busy 错误从不重试。这是为了覆盖 SQLite busy handler 不处理的锁升级路径，以及满负载下单次迁移单元超过一个 busy_timeout 窗口的偶发失败。
 - migration definitions分为`LegacySql`（0001/0002）与`DescriptorV1`（0003+）；所有SQL使用`include_bytes!`原始asset bytes。
 - 0001/0002 ledger checksum保持SQL bytes SHA-256，descriptor列必须null。
 - 0003 exact identity：version `3`、name `versioned_event_outbox`、唯一asset `rust/crates/kernel-sqlite/migrations/0003_versioned_event_outbox.sql`、transform三元组`shittim.kernel-sqlite.outbox-v1-to-versioned-v1` / `1` / `kernel_sqlite::migration::outbox_v1_to_versioned_v1`；phase set=`ledger_upgrade|replacement_schema|table_swap`。**transform 不迁移 v1 业务数据**：非空 pre-0003 Outbox 直接 `reinitialize-required`；空表仅做 shape 升级。
@@ -137,11 +138,11 @@ SqliteStore::get_intent(transition_id) -> Option<ActionTransitionIntentV1>
 SqliteStore::get_for_action_revision(...) -> Option<ActionTransitionIntentV1>
 SqliteStore::reconcile_intent(transition_id) -> ReconcileIntentResult // prepared|committed|corrupt
 // Lease/Stop Fence owners implemented:
-WriteTransaction::acquire_lease(AcquireActionLeaseCommand) -> ActionLeaseSnapshot
+WriteTransaction::acquire_lease(AcquireLeaseCommand) -> AcquireLeaseResult
 WriteTransaction::begin_dispatch(BeginDispatchCommand) -> BeginDispatchResult
 WriteTransaction::release_or_expire_lease(ReleaseOrExpireLeaseCommand) -> ReleaseOrExpireLeaseResult
 WriteTransaction::activate_stop_fence(ActivateStopFenceCommand) -> ActivateStopFenceResult
-SqliteStore::get_action_lease(id, read_at: DateTime<Utc>) -> Option<ActionLeaseSnapshot>
+SqliteStore::get_action_lease(id, read_at: DateTime<Utc>) -> Option<ActionLease>
 SqliteStore::get_stop_fence() -> Option<StopFenceSnapshot>
 
 // Production status edges are owned by named business orchestrators. The mechanical
@@ -151,7 +152,7 @@ SqliteStore::get_stop_fence() -> Option<StopFenceSnapshot>
 
 - pending insert：`status=pending`、`revision=1`、`permission_decision_ref`/`approval_chain_id`/`result`/`lease` 为 null；owning Task 必须存在；canonical JCS readback。
 - Action 状态变更没有通用 repository 写入口；命名 owner 先验证自身权威证据，再通过 crate-internal `mark_binding_policy_committed_with_event` 或 `mark_approval_committed_with_event` 进入 `mark_committed_inside`。机械层只投影已经验证的 typed fact，不接受 crate 外 caller 自选 PD/Approval 引用；裸 `mark_committed_with_event` 仅供 `cfg(test)` 的机械闭包测试。
-- **需 effects 的边当前 fail closed**：domain outcome 要求 lease/lock release（如 `leased → approved|cancelled|unknown_side_effect`）时，在 lease API 落地前明确拒绝，禁止静默半提交。
+- **需 effects 的边由命名 owner 消费**：`leased` / `in_flight` 退出边的 typed `LeaseReleaseEffect` 由 `release_or_expire_lease`（六条退出边）、Stop owner（`activate_stop_fence` 收敛）与 Approval 撤销（invalidation 的 `leased → cancelled`）经 `LeaseCommitProjection::Clear` 提交——先删 Lease 行（级联删锁）再 CAS 离开 lease-bearing 状态；其它路径仍拒绝，禁止静默半提交。
 - `insert_intent`：`transition_id` 与业务六元组双唯一键；同事实重放返回原 intent；非法边 fail closed。
 - 机械 commit 在同一 savepoint 内经 `domain-task::apply_action_transition` 做完整领域 evidence 门，再 CAS Action + `append_active_event_v2(action.state_changed)` + 回写 `committed_event_id`；失败不占 sequence/position。同 event id 重放幂等，只验 intent↔event 链路，不要求 Action head 仍停在该 revision。
 - `reconcile_intent`：只观察 stored 关系，返回 `prepared|committed|corrupt`，不补造 event 或更换 transition id。Committed 只对比 intent↔outbox event 快照字段；后续合法推进不得映射 Corrupt。
@@ -211,7 +212,20 @@ WriteTransaction::resolve_approval_and_commit_action(ResolveApprovalAndCommitAct
 - 本阶段仍未实现：child materializer、recovery 闭集、Provider 真实远程验签；Policy binding 与 Lease/Stop 全链 owner 已实现。`invalidate_and_optionally_replace` 已同事务撤销链上 leased Action 的 Lease 并驱动 `leased→cancelled`（approved 不动、in_flight 不打断），`resolve` / `resolve_approval_and_commit_action` 已能驱动 `pending→approved`。
 - **`acquire_lease` 责任边界**：仅在 Stop Fence 未激活时执行；从 Action 的 canonical `resource_refs` 派生 Resource Lock 集合；在同一 savepoint 内顺序插入 `action_leases` / `action_resource_locks`、写 `approved → leased` intent（`expected_execution_generation=G`，`resulting_execution_generation=G+1`）、CAS Action（revision +1、execution_generation +1、内联 lease 镜像）、追加 `action.state_changed`，失败整体回滚。重名资源冲突返回 `action_not_executable` 并回滚，不占 sequence。
 - **`get_action_lease` 严格只读**：在 leased / in_flight 状态验证 Action 内联 lease、action_leases 行、Resource Lock 集合与 canonical `resource_refs` 完全一致、max_uses=1、lease generation 与 Action.execution_generation 一致、acquisition intent 与 event 一对一闭包；Stop Fence 激活时返回 `stop_fence_active`；lease 过期或数据破损返回 `stored_data_invalid`。
-- **需 effects 的其它边仍 fail closed**：`leased → approved|cancelled|unknown_side_effect` 与 `in_flight` 终态仍要求 typed `LeaseReleaseEffect`，在 `release_or_expire_lease` / `begin_dispatch` 落地前拒绝，禁止静默半提交。
+- **需 effects 的其它边仍 fail closed**：`leased → approved|cancelled|unknown_side_effect` 与 `in_flight` 终态要求 typed `LeaseReleaseEffect`，由命名 owner（`release_or_expire_lease` / Stop owner / Approval 撤销）经 `LeaseCommitProjection::Clear` 消费，其它路径仍拒绝，禁止静默半提交。
+
+## Child Action materializer（切片5）
+
+`WriteTransaction::materialize_child_task(command)` 原子完成一个 `kernel.task/task.child.create` S1 Action：在单一 savepoint 内写入完成态 Action、子 Task/TaskScope/ContentOrigin/Provenance、VerificationResult、创建 Audit 与两条 Outbox 事件（子 `task.created` sequence=0 causation=父 Action；`action.state_changed` causation=完成 transition），并执行严格 readback。
+
+- **幂等四分支**：同 hash → 重放（`Replayed`，零新写入）；异 hash → `ChildMaterializationConflict`（分 proposal/material 维度）；跨 Action 同 execution key → `IdempotencyConflict`；mapping 缺失/不完整 → `StoredDataInvalid`。
+- **双命脉校验**：proposal == `Action.structured_arguments`（`ContractInvalid`）；物化 delta 的指纹 == 评估时 `permission.evaluated` 审计记录的 `child_task_delta_hash`（`StoredDataInvalid`）。
+- **readback 严格性**：fresh/replay/reconcile 共用同一校验函数；replay 从存储权威确定性重建 TaskScope/ContentOrigin/VerificationResult 后字节级全等比较，篡改必 `StoredDataInvalid`/`Corrupt`。
+- **闭包钉**：mapping 行钉 transition_id、task_created_event_id、action_state_changed_event_id、scope_id、origin_id 五个闭包 FK（DEFERRED），replay 经 `outbox::read_record_by_event_id` 精确读。
+- **approval 消费**：声明消费 approved resolution 时校验 usable/chain-head/requirement，并全链投影 `approval_resolution_ref`；credential/challenge refs 真实注入 external snapshot；rollback_capability 按 `rollback_policy` 投影。
+- **UUID 闭集**：10 个 allocation UUID 在写入前与全部持久化表（含 0011 新表）碰撞预检，`ConstraintViolation` 零写入。
+
+查询面：`get_child_materialization_by_action` / `get_child_materialization_by_child_task`（`ChildMaterializationView`，全量闭包校验）；`reconcile_child_materialization(action_id)`（`Committed` / `Absent` / `Corrupt`，Safe Recovery 面）。
 
 ## Transaction-bound rate limit
 
@@ -223,4 +237,4 @@ WriteTransaction::resolve_approval_and_commit_action(ResolveApprovalAndCommitAct
 
 ## 明确未实现
 
-root TaskCreate v2 repository + migration 0010 Lease/Stop 持久化基座 + **Action Lease/Stop Fence 全链 owner**（acquire/dispatch/release/stop 激活与只读）已落地。Child Action materialization、child-completion与recovery写方法、child active Event producer、Provider真实远程验签、Publisher、versioned KCP poll、server/agentd、retention/claim lease仍未实现。Publisher/poll不在`V2InitialBuildActive`；§13.7完整闭合仍需切片5 child materializer（Lease dispatch/release/Stop Fence 与真实远程验签已落地）。
+root TaskCreate v2 repository + migration 0010 Lease/Stop 持久化基座 + **Action Lease/Stop Fence 全链 owner**（acquire/dispatch/release/stop 激活与只读）+ **切片5 Child Action materializer**（migration 0011 原子物化 + 严格 readback + 四方法闭集）已落地。child-completion与recovery写方法、child active Event producer 的其余部分、Provider真实远程验签（Ed25519 纯库已落地，Provider 接入未做）、Publisher、versioned KCP poll、server/agentd、retention/claim lease仍未实现。Publisher/poll不在`V2InitialBuildActive`；§13.7完整闭合仍需 `task.list` / `event.subscribe` / `event.poll` handler 与 recovery orchestrator。

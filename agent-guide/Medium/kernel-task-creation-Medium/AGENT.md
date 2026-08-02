@@ -34,7 +34,7 @@
 
 ## 测试资产
 
-- 官方 fixtures：`schemas/fixtures/task/child_task_proposal_normalized_hash.v1.json`、`schemas/fixtures/task/task_creation_allocations.v1.json`（及 root 对应 fixtures）。规范化/哈希输出必须与 fixtures 对账。
+- 官方 fixtures：`schemas/fixtures/task/child_task_proposal_normalized_hash.v1.json`、`schemas/fixtures/task/task_creation_allocations.v1.json`（root 与 child allocation 用例均内含于本文件）。规范化/哈希输出必须与 fixtures 对账。
 
 ## 验收命令
 

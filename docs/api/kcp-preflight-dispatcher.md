@@ -1,6 +1,6 @@
 # KCP Value preflight 与注册式 dispatcher
 
-> 状态：切片3b 起 `kernel-kcp` 实现 method-aware active preflight/dispatcher/handler。production `METHOD_VERSION_BINDINGS` / `select_request_version` 被 runtime 消费；`task.create` 仅 active v2 进入 registration，v1 create production 请求返回 `unsupported_schema_version`。五方法仍无正式 handler，server 阶段门保持关闭；§13.7 未闭合。
+> 状态：切片3b 起 `kernel-kcp` 实现 method-aware active preflight/dispatcher/handler。production `METHOD_VERSION_BINDINGS` / `select_request_version` 被 runtime 消费；`task.create` 仅 active v2 进入 registration，v1 create production 请求返回 `unsupported_schema_version`。切片 6 落地后 `stop.activate` / `stop.status` 已注册；`task.list` / `event.subscribe` / `event.poll` 三方法仍无正式 handler，server 阶段门保持关闭。
 
 ## 范围
 
@@ -11,10 +11,10 @@
 ```rust
 preflight_value(value)
 -> narrow_to_registered(request)
--> TypedDispatcher::new(clock, ids, backend).dispatch(request)
+-> TypedDispatcher::new(clock, ids, task_backend, stop_backend).dispatch(request)
 ```
 
-没有 `process_value` 或语义等价的一站式全 Catalog API。首批八方法都有正式 Schema/Catalog，但目前只有三个方法拥有 typed handler。
+没有 `process_value` 或语义等价的一站式全 Catalog API。首批八方法都有正式 Schema/Catalog，目前五个方法拥有 typed handler。
 
 ## Public API
 
@@ -22,7 +22,7 @@ preflight_value(value)
 - `TypedCatalogRequest::family()` / `method()`：只读查看已经确认的 family 与 generated discriminator；内部 envelope variant 私有，只能由 preflight 构造。
 - `narrow_to_registered(TypedCatalogRequest) -> RegistrationResult`
 - `RegisteredRequest::method()`：只读查看 registered method；内部 variant 私有，只能由 narrow 构造。
-- `TypedDispatcher<'a, C, G, B>::new(&C, &G, &B)` / `dispatch(RegisteredRequest)`：借用现有 `KernelClock`、`KernelIdGenerator`、`TaskApplicationBackend`。
+- `TypedDispatcher<'a, C, G, B, S>::new(&C, &G, &B, &S)` / `dispatch(RegisteredRequest)`：借用现有 `KernelClock`、`KernelIdGenerator`、`TaskApplicationBackend`、`StopApplicationBackend`。
 - `TaskCreateCommandRequestV2`：active root-only create 的已解码请求（public，供 handler/测试使用）；不是泛型 `TypedKcpCommandEnvelopeV2`。
 
 `PreflightLocalRejection`、`KnownCatalogMethodNotImplemented`、`TypedCatalogRequest` 与 `RegisteredRequest` 均不实现 `Serialize`；测试使用负 trait assertion 锚定。生产 API 不接收 validator/catalog/bypass flag，response fault seam 只存在于 crate 私有单元测试。
@@ -52,8 +52,8 @@ method-aware 版本矩阵：
 | family | method | active | legacy validation | production 行为 |
 |---|---|---|---|---|
 | command | `task.create` | `[2]` | `[1]` | v2 Accepted；v1 → `unsupported_schema_version` |
-| command | `stop.activate` | `[1]` | `[]` | v1 Accepted → KnownCatalogMethodNotImplemented |
-| query | 其余六方法 | `[1]` | `[]` | v1 Accepted；`system.ping`/`task.get` Registered |
+| command | `stop.activate` | `[1]` | `[]` | v1 Accepted → Registered（切片6） |
+| query | 其余六方法 | `[1]` | `[]` | v1 Accepted；`system.ping`/`task.get`/`stop.status` Registered；`task.list`/`event.subscribe`/`event.poll` KnownCatalogMethodNotImplemented |
 
 preflight 的 `unsupported_auth_schema` 只在实际执行 auth 判定时适用。它不能被 root official fixture harness 借用。
 
@@ -88,8 +88,10 @@ response 构造复用 `kernel-kcp` crate-private 通用 validated error finalize
 | `system.ping` | Registered → handler |
 | `task.create`（v2 only） | Registered → root-only v2 handler |
 | `task.get` | Registered → handler |
-| `task.list` / `event.subscribe` / `event.poll` / `stop.activate` / `stop.status` | `KnownCatalogMethodNotImplemented` |
+| `stop.activate` | Registered → handler（retained v1 command） |
+| `stop.status` | Registered → handler（retained v1 query） |
+| `task.list` / `event.subscribe` / `event.poll` | `KnownCatalogMethodNotImplemented` |
 
-`KnownCatalogMethodNotImplemented` 不是 wire error，不得序列化，也不得伪装成 `unsupported_method` / `method_unavailable`。组合根在五方法拥有正式 handler 前必须 fail closed 且禁止启动 server。`InternalContractViolation`（当前唯一值 `TaskCreateV1AfterActivePreflight`）是主动 method-aware preflight 不可达的内部合同失败身份：typed `task.create` v1 只可能经构造旁路到达 narrowing；同样不得序列化，不得冒充任何 Catalog 方法或 wire error。
+`KnownCatalogMethodNotImplemented` 不是 wire error，不得序列化，也不得伪装成 `unsupported_method` / `method_unavailable`。组合根在三方法拥有正式 handler 前必须 fail closed 且禁止启动 server。`InternalContractViolation`（当前唯一值 `TaskCreateV1AfterActivePreflight`）是主动 method-aware preflight 不可达的内部合同失败身份：typed `task.create` v1 只可能经构造旁路到达 narrowing；同样不得序列化，不得冒充任何 Catalog 方法或 wire error。
 
-`TypedDispatcher` 是显式三方法注册表：ping 用 clock，create 用 clock/ids/backend，get 用 clock/backend；无损保留 `post_commit_notification_intents`。
+`TypedDispatcher` 是显式五方法注册表：ping 用 clock，create 用 clock/ids/task_backend，get 用 clock/task_backend，stop.activate 用 clock/ids/stop_backend，stop.status 用 clock/stop_backend；无损保留 `post_commit_notification_intents`。

@@ -22,7 +22,7 @@
 
 1. **状态生命周期**：`proposed`（讨论中）→ `accepted`（已接受，可能未实现）→ `superseded`（被后续 ADR 替代）。**accepted ≠ 代码已完成。**
 2. **徽章规则**：每篇 ADR 文首只允许一枚实现状态徽章（`designed` / `partial` / `implemented`）+ 指向 MATRIX/PROGRESS 的链接；**禁止**在 ADR 维护字段级或切片级完成清单。
-3. **徽章必须与 MATRIX 同步**：实现落地后立即升徽章。已知实例：ADR-0011（Lease/Stop Fence）在 migration 0010 与 `acquire_lease` / `get_action_lease` 落地后应从 `designed` 升为 `partial`；再实现 `begin_dispatch` / `release_or_expire_lease` / Stop owner 后升 `implemented`（以 MATRIX/PROGRESS 实际状态为准）。
+3. **徽章必须与 MATRIX 同步**：实现落地后立即升徽章。已知实例：ADR-0011（Lease/Stop Fence）已随 c11d3be 升为 `implemented`（migration 0010 + acquire/dispatch/release/Stop owner 全链落地；以 MATRIX/PROGRESS 实际状态为准）。
 4. **何时必须写 ADR**：影响新常驻进程、核心协议、状态所有者、Core 边界、特权 Action 类别、技术栈/新 crate/新 workspace 依赖、Schema 数量基线变化。
 5. **supersede 不改写历史**：被替代的 ADR 保留原文，在 `adr/README.md` 索引与相关 ADR 文首标注「部分被 ADR-XXXX supersede（具体节）」。
 6. **编号与命名**：新 ADR 取下一空闲编号，中文文件名与既有风格一致（`NNNN-短横线标题.md`），并登记 `adr/README.md` 索引。

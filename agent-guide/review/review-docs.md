@@ -9,7 +9,7 @@
 ## 逐项清单
 
 - [ ] **状态单一来源**：任何完成度陈述是否只在 `docs/IMPLEMENTATION_MATRIX.md` 与 `docs/PROGRESS.md`；api 页/ADR 是否有字段级复述（subject_hash、UUID 分配、projection 形状、IR 细节等）——有即违规；
-- [ ] **徽章纪律**：api/ADR 是否一枚徽章 + 链接；徽章是否与 MATRIX 一致（如 ADR-0011 应为 `partial` 而非 `designed`）；
+- [ ] **徽章纪律**：api/ADR 是否一枚徽章 + 链接；徽章是否与 MATRIX 一致（如 ADR-0011 已为 `implemented`，c11d3be 后不得再要求 `partial`）；
 - [ ] **数字实测**：测试数量、Schema 数量是否有实测依据；有无预写猜测；
 - [ ] **无速朽事实**：无「领先远端 N 提交」类表述；
 - [ ] **HANDOVER**：`docs/DEVELOPMENT_HANDOVER.md` 的「下一实现任务」是否仍是旧任务（重复实现风险）；
@@ -21,8 +21,8 @@
 
 | 主题 | 正确事实 |
 |---|---|
-| Lease | acquire/get 已实现；dispatch/release/Stop owner 未实现 |
-| 切片 4c | 9/11 High，剩 Lease 关联撤销 + 真实远程验签 |
+| Lease | acquire/get/dispatch/release/Stop owner 全部已实现（c11d3be）；任何「owner 未实现」表述即漂移 |
+| 切片 4c | 11/11 High 已闭合（c11d3be：Approval 撤销 Lease + 真实远程验签）；「未完成/剩 2 项」表述即漂移 |
 | 五方法 handler | 未实现；KCP 不可连接 |
 | Event 计数 | active 事件类型 5（task.created / action.state_changed / approval.state_changed / stop_fence.activated 等，以代码与文档口径为准）；「八 Schema」是资产数不是 active 类型数 |
 | Node 入口 | `~/.local/share/pnpm/bin`（不是 `/node` 也不是系统 node） |

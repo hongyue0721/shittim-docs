@@ -26,7 +26,7 @@
 1. 投影输入必须是 typed facts 结构体（如 `MaterialAuthorizationFactsV1`），禁止接受 `serde_json::Value` 自由袋。
 2. 同一投影的 JCS bytes 与哈希是跨层对账事实：算法、字段集、字段顺序的任何变化都是合同变更，必须先改 `specs/` 与 fixtures。
 3. 纯函数：无 IO、无存储、无时间/ID 分配。
-4. 未来 `RemoteSignatureVerifier` 的纯密码学部分（Ed25519 RFC8032 pure mode）规划落在本 crate（`docs/PROGRESS.md` 下一步 3）；**落地前**必须先在 ADR/spec 拍板 verify 边界与失败语义，不得预先堆放半成品验签代码。
+4. `RemoteSignatureVerifier` 的纯密码学部分（Ed25519 RFC8032 pure mode）已落地本 crate（`remote_verifier.rs`，随 Lease/Stop Fence 切片 `c11d3be` 进入基线）。**verify 边界与失败语义的任何变更都是合同变更**：必须先拍板 ADR/spec，再同步 fixtures 与 conformance 锚点，不得直接改验签行为。
 
 ## 测试资产
 

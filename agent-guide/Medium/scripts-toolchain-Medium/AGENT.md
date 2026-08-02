@@ -24,7 +24,7 @@
 
 1. **零依赖**：只准用 Node 标准库；新增 npm 依赖属 ADR 级变更。
 2. **工具链事实**：Node 精确 24.18.0、pnpm 精确 11.3.0，入口 `~/.local/share/pnpm/bin`；`engine-strict=true` 只是提示，不得当作硬门；Corepack 不可用。
-3. **临时目录合同**：仅工具测试使用固定 `/mnt/data/shittim-docs-sync-tests` 与 `/mnt/data/shittim-file-manifest-tests`（mode 0700/0600，逐 fixture 清理）；不得把该约束推广成全 workspace 禁令，也不得让工具读写其它 host 路径。
+3. **临时目录合同**：仅工具测试使用由 `TMPDIR` 派生的 `shittim-docs-sync-tests` 与 `shittim-file-manifest-tests`（mode 0700/0600，逐 fixture 清理），不硬编码 host 路径；`TMPDIR` 必须显式设置为 `/tmp` 之外的任意可写目录（如 `$HOME/.cache/shittim-build-tmp`），未设置或指向 `/tmp` 时测试 fail closed；不得把该约束推广成全 workspace 禁令，也不得让工具读写其它 host 路径。
 4. **锁纪律**：`O_EXCL` 独占锁不自动清 stale；撞锁停止上报（双仓同步锁见 `Difficult/dual-repo-sync-Difficult/AGENT.md`）。
 5. **统一门纪律**：`check-schema.sh` 任一步失败都修根因，禁止绕过单步提交；跑之前先 `git add -A`（generated 漂移检查基于 index/worktree diff）。
 6. **失败处理**：统一门/工具失败时按结构化错误码定位根因，禁止用「跳过/重试碰运气」掩盖（`REPOSITORY_MAINTENANCE.md` §5）。

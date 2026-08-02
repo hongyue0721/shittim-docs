@@ -96,7 +96,7 @@ ADR 与 `docs/api/*` 页面**只允许**一枚状态徽章（如 `implemented` /
 
 锁文件与临时工作根：默认在文档 checkout 的父目录下（`shittim-docs-repository.sync.lock` / `shittim-docs-sync-work`），可用 `SHITTIM_SYNC_STATE_ROOT` 覆盖；锁为 `O_EXCL` 独占，**不**自动清除 stale。
 
-**双仓 sync 工具及其 Node 测试的临时目录合同（仅本工具链）**：文档同步测试根 `/mnt/data/shittim-docs-sync-tests` 与 `update-file-manifest --self-test` 使用的 mode `0700` 根 `/mnt/data/shittim-file-manifest-tests`（mode `0600` 独占锁 `.self-test.lock`）仍固定在 `/mnt/data` 下；每个 fixture 独立创建并在结束时递归清理，不读取 `os.tmpdir()`。该约束**只**约束上述工具测试，**不得**被解读为“整个 workspace 禁止 `/tmp`”。
+**双仓 sync 工具及其 Node 测试的临时目录合同（仅本工具链）**：文档同步测试根 `shittim-docs-sync-tests` 与 `update-file-manifest --self-test` 使用的 mode `0700` 根 `shittim-file-manifest-tests`（mode `0600` 独占锁 `.self-test.lock`）由 `TMPDIR` 环境变量派生（`<TMPDIR>/shittim-docs-sync-tests` 与 `<TMPDIR>/shittim-file-manifest-tests`），**不硬编码** host 路径；`TMPDIR` 必须显式设置为 `/tmp` 之外的任意可写目录（推荐 `$HOME/.cache/shittim-build-tmp`），未设置或指向 `/tmp` 时工具测试 fail closed 拒绝运行。每个 fixture 独立创建并在结束时递归清理，不读取 `os.tmpdir()`。该约束**只**约束上述工具测试，**不得**被解读为“整个 workspace 禁止 `/tmp`”。
 
 **本阶段仓库编译与测试运行时的主机约定（与上条不同层）**：当前维护者/Agent 在本主机跑编译或本阶段全量/focused 测试时，运行命令必须显式设置 `TMPDIR` 与（Rust 时）`CARGO_TARGET_DIR` 到**任意可写目录**（推荐仓库外或已 gitignore 的目录），禁止写死单一 host 路径，例如：
 
