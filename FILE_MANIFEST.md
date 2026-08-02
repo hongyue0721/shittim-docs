@@ -46,7 +46,7 @@
 - `docs/AGENTS.md` — 10 lines
 - `docs/DEVELOPMENT_HANDOVER.md` — 174 lines
 - `docs/IMPLEMENTATION_MATRIX.md` — 1 lines
-- `docs/PROGRESS.md` — 150 lines
+- `docs/PROGRESS.md` — 151 lines
 - `docs/REPOSITORY_MAINTENANCE.md` — 160 lines
 - `docs/api/README.md` — 41 lines
 - `docs/api/approval-contract.md` — 55 lines
