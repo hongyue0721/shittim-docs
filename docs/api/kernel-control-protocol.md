@@ -1,6 +1,6 @@
 # Kernel Control Protocol
 
-> 状态：active KCP合同要求method-aware payload version，`task.create` active版本为v2 root-only；Envelope V2 / TaskCreate v2 Schema、generated root types、**production MethodVersionBindings（切片3a）** 与 **kernel-kcp method-aware runtime（切片3b）** 已落地。`stop.activate` / `stop.status` 的 SQLite owner（Stop Fence 激活与只读）与真实远程验签已落地，但可连接 server 仍未完成（五方法无 handler；Publisher/poll 未实现）。字段与行为的唯一事实源是 [`IMPLEMENTATION_CONTRACTS.md` 第5节](../../specs/IMPLEMENTATION_CONTRACTS.md#5-kernel-control-protocol)。
+> 状态：active KCP合同要求method-aware payload version，`task.create` active版本为v2 root-only；Envelope V2 / TaskCreate v2 Schema、generated root types、**production MethodVersionBindings（切片3a）** 与 **kernel-kcp method-aware runtime（切片3b）** 已落地。`stop.activate` / `stop.status` 的 SQLite owner（Stop Fence 激活与只读）与真实远程验签已落地；切片5/6 后 child materializer 与 stop 双方法 handler 已落地，但可连接 server 仍未完成（`task.list` / `event.subscribe` / `event.poll` 无 handler；Publisher/poll 未实现）。字段与行为的唯一事实源是 [`IMPLEMENTATION_CONTRACTS.md` 第5节](../../specs/IMPLEMENTATION_CONTRACTS.md#5-kernel-control-protocol)。
 
 ## 定位
 
@@ -38,7 +38,7 @@ active结构合同使用`KcpCommandEnvelopeV2`=`https://schemas.shittim.local/kc
 | `stop.activate` | Command | 激活 Kernel Stop Fence，并执行 Emergency Stop 的 Kernel 副作用集 | 当前全局 generation |
 | `stop.status` | Query | 只读 | 不适用 |
 
-完整请求/响应payload、排序、cursor与方法专属错误见权威规范。新Child Task只通过父Task Action原子materialization。当前`kernel-sqlite`已实现统一 **v2-only** Outbox（legacy append 已删）、root `create_root_task_v2` 与 Lease/Stop Fence 全链 owner（含 `stop.activate` / `stop.status` 的 SQLite owner）；`kernel-kcp` runtime 已接 method-aware preflight 与 active root create v2 / get / ping。child Action materializer、其余 active producer、Publisher 与 versioned poll 未实现。
+完整请求/响应payload、排序、cursor与方法专属错误见权威规范。新Child Task只通过父Task Action原子materialization（切片5 已落地）。当前`kernel-sqlite`已实现统一 **v2-only** Outbox（legacy append 已删）、root `create_root_task_v2`、child materializer（migration 0011）与 Lease/Stop Fence 全链 owner（含 `stop.activate` / `stop.status` 的 SQLite owner）；`kernel-kcp` runtime 已接 method-aware preflight 与 active root create v2 / get / ping / stop.activate / stop.status。其余 active producer 已全部有 owner（root/child `task.created`、`action.state_changed`、`approval.state_changed`、`stop_fence.activated`）；Publisher 与 versioned poll 未实现。
 
 ## Value preflight 与 registration 合同
 
@@ -46,13 +46,13 @@ active结构合同使用`KcpCommandEnvelopeV2`=`https://schemas.shittim.local/kc
 - Value preflight、registration 与 dispatcher 是 method-aware 库级路径（切片3b）：V2 Envelope 结构门 + `select_request_version` 业务门。最终优先级、完整 Schema/generated decode 与 production binding/`V2InitialBuildActive` 以 IC §5.11、§13.5、§13.7 为准。
 - active `task.create`只接受v2；v1虽有known legacy Schema，也必须返回`unsupported_schema_version`且不能进入active registration（已实现）。
 - MethodVersionBinding完整validator已在工具阶段以synthetic 8-method非空manifest测试；expected family/method集合直接从registry V2 Envelope facts派生。切片3a起production manifest由`validate_production_manifest_stage`断言精确等于IC §13.5目标表；`KCP_ENVELOPE_AUTHORITY_*`只表达family structure authority；`METHOD_VERSION_BINDINGS`表达bound version；**registration/handler 可用性由 kernel-kcp 显式实现，不由 bindings 暗示 server 可连接**。
-- active `task.create` v2的task creation纯逻辑正式owner为crate`kernel-task-creation`；repository `create_root_task_v2` 与 kcp handler/adapter 已接入（切片2/3b）。authorization projections / child materializer 另切片。
-- task creation三份official测试制品已位于root `schemas/fixtures/kcp/task_create_normalized_hash.v2.json`、child `schemas/fixtures/task/child_task_proposal_normalized_hash.v1.json`、allocation `schemas/fixtures/task/task_creation_allocations.v1.json`。child materializer 与 §13.7 完整谓词仍未完成。
+- active `task.create` v2的task creation纯逻辑正式owner为crate`kernel-task-creation`；repository `create_root_task_v2` 与 kcp handler/adapter 已接入（切片2/3b）。authorization projections 已落地；child materializer 另切片5 已落地。
+- task creation三份official测试制品已位于root `schemas/fixtures/kcp/task_create_normalized_hash.v2.json`、child `schemas/fixtures/task/child_task_proposal_normalized_hash.v1.json`、allocation `schemas/fixtures/task/task_creation_allocations.v1.json`。§13.7 完整谓词闭合待 `task.list` / `event.subscribe` / `event.poll` handler。
 - request ID 不可关联时本地拒绝且不发响应；可关联的五类 preflight error 使用固定安全 message、`details=null`、`retryable=false`，并经过不可替换 Response Schema 门。
-- 八方法合法请求都必须先成为 generated typed Accepted；三方法 narrow 为 `RegisteredRequest`，其余五个得到本地不可序列化 `KnownCatalogMethodNotImplemented`，不是 wire error。
+- 八方法合法请求都必须先成为 generated typed Accepted；五方法 narrow 为 `RegisteredRequest`，其余三个得到本地不可序列化 `KnownCatalogMethodNotImplemented`，不是 wire error。
 - 公开调用分成 `preflight_value -> narrow_to_registered -> TypedDispatcher.dispatch`，已在 `kernel-kcp` 实现；详细 API 见 [`kcp-preflight-dispatcher.md`](kcp-preflight-dispatcher.md)。
 
-## 三方法 typed handler 边界
+## 五方法 typed handler 边界
 
 - 输入已通过对应 Envelope Schema、方法 payload Schema 与 typed decode；正常 dispatcher 路径还会先 narrow 为 `RegisteredRequest`。现有公共 `handle_*` 对错误 family/variant 返回本地 InputMethodMismatch；`serde_json::Value` preflight、bytes/frame、protocol/auth/method/schema 分类不在 handler 内，`invalid_request` 不由 typed handler 产生。
 - 输出 payload 先按原方法 response Schema 校验，再将最终成功/错误 Response Envelope 按通用 Schema 校验。
@@ -65,7 +65,7 @@ active结构合同使用`KcpCommandEnvelopeV2`=`https://schemas.shittim.local/kc
 
 ## 实现阶段门
 
-当前已实现 method-aware Value preflight/registration/dispatcher 与三个 typed application handler（ping / create v2 / get）；五个 Catalog 方法仍无正式 handler。bytes/frame/transport/server 生命周期均未完成，因此不得启动 server，也不新增 `method_unavailable`。
+当前已实现 method-aware Value preflight/registration/dispatcher 与五个 typed application handler（ping / create v2 / get / stop.activate / stop.status）；三个 Catalog 方法（`task.list` / `event.subscribe` / `event.poll`）仍无正式 handler。bytes/frame/transport/server 生命周期均未完成，因此不得启动 server，也不新增 `method_unavailable`。
 
 
 ## Cursor
@@ -74,8 +74,8 @@ Event cursor 只使用十进制字符串表示的全局 `outbox_position`。`seq
 
 ## 当前不可用项
 
-- 已有 Value preflight/registration/dispatcher 与三个 typed application handler Rust 实现；公共 raw 边界只接受调用方已解析的 `Value`；
-- 其余五个 Catalog 方法没有正式 handler；
+- 已有 Value preflight/registration/dispatcher 与五个 typed application handler Rust 实现；公共 raw 边界只接受调用方已解析的 `Value`；
+- 其余三个 Catalog 方法（`task.list` / `event.subscribe` / `event.poll`）没有正式 handler；
 - 没有 Socket/Pipe server；
 - 没有可运行的 `agentd` 组合根；
 - 没有 TypeScript client 包；
@@ -85,6 +85,6 @@ Event cursor 只使用十进制字符串表示的全局 `outbox_position`。`seq
 ## 已有契约产物
 
 - KCP retained v1 Envelope与八方法v1 request/response JSON Schema：`schemas/source/kcp/`；首批12个Schema的source/manifest entries与generated Rust root types已落地，包括两Envelope V2与TaskCreate request/response V2；production MethodVersionBindings为IC §13.5八方法集（切片3a），generated `select_request_version`可用。
-- 生成的 Rust 类型与manifest catalog，以及现有 Command/Query/Event typed decode：`kernel-contracts`（见 [schema-generation.md](schema-generation.md)）。通用`decode_validated`、结构化post-Schema decode taxonomy与共享format assertion配置已完成；当前运行时仍以retained v1路径为准，active method-aware 初始交付尚未完成；
+- 生成的 Rust 类型与manifest catalog，以及现有 Command/Query/Event typed decode：`kernel-contracts`（见 [schema-generation.md](schema-generation.md)）。通用`decode_validated`、结构化post-Schema decode taxonomy与共享format assertion配置已完成；当前运行时已消费 production bindings 的 method-aware 初始交付（切片3b+6），retained v1 仅保留为 legacy validation 与 catalog 事实；
 - Response Envelope 只按 `status = ok | error` 校验。它不携带原始方法 discriminator，因此不生成方法级 typed envelope；handler/客户端必须根据原请求方法用对应 response Schema 校验成功 `payload`，再校验通用 Response Envelope；
-- 这表示不可连接 Value preflight、三方法 dispatcher/handler 已可供未来组合根调用；不表示五个缺失 handler或 KCP server 已可用。
+- 这表示不可连接 Value preflight、五方法 dispatcher/handler 已可供未来组合根调用；不表示三个缺失 handler或 KCP server 已可用。

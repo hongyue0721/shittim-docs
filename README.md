@@ -28,7 +28,7 @@
 - [`docs/PROGRESS.md`](docs/PROGRESS.md)：中文实现进度与当前阻塞。
 - [`docs/REPOSITORY_MAINTENANCE.md`](docs/REPOSITORY_MAINTENANCE.md)：主仓与纯文档镜像的持续更新、发布顺序、失败门禁，以及已实现的 `scripts/sync-docs-repository.mjs`（`pnpm run check:docs-repository` / `sync:docs-repository` / `test:docs-repository`）。
 - [`docs/IMPLEMENTATION_MATRIX.md`](docs/IMPLEMENTATION_MATRIX.md)：规范、Schema、实现和测试状态矩阵。
-- [`docs/api/README.md`](docs/api/README.md)：KCP、事件与错误文档入口；当前Rust已实现root TaskCreate、Action/PolicyRule/PermissionDecision/Approval/Identity repositories及root/action/approval producers，Policy matcher直接消费v2。child materializer、child producer、Publisher、`agentd`与可连接server尚未实现。
+- [`docs/api/README.md`](docs/api/README.md)：KCP、事件与错误文档入口；当前Rust已实现root TaskCreate、child materializer（切片5）、Action/PolicyRule/PermissionDecision/Approval/Identity repositories及root/child/action/approval/stop_fence producers，Policy matcher直接消费v2。`task.list` / `event.subscribe` / `event.poll` handler、Publisher、`agentd`与可连接server尚未实现。
 - [`docs/sdk/extension-sdk.md`](docs/sdk/extension-sdk.md)：Extension SDK Base 文档入口；Base 是基础产品必做，当前无可发布 SDK。
 - [`adr/README.md`](adr/README.md)：已接受架构决策索引。
 

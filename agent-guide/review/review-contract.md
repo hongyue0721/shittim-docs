@@ -47,7 +47,7 @@
 
 1. Lease 状态：`acquire_lease` / `get_action_lease` 已实现 vs 文档仍写「未实现」——若发现即 High；
 2. 切片 4c：11/11 High 已随 c11d3be 闭合（Approval 撤销 Lease + 真实远程验签）；再出现「4c 未完成/剩 2 项」旧表述即 High；
-3. 五方法 handler：文档写「八方法已支持」而 dispatcher 只有三方法注册——即 High；
+3. handler 覆盖夸大：文档写「八方法已支持」而 dispatcher 只有五方法注册——即 High；
 4. 已知未裁决偏差（request_id 重放、时钟精度、invalid_scope_pattern details、trim）——不得在文档中写成已修复。
 
 ## 输出

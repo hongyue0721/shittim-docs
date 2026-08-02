@@ -23,7 +23,7 @@
 |---|---|
 | Lease | acquire/get/dispatch/release/Stop owner 全部已实现（c11d3be）；任何「owner 未实现」表述即漂移 |
 | 切片 4c | 11/11 High 已闭合（c11d3be：Approval 撤销 Lease + 真实远程验签）；「未完成/剩 2 项」表述即漂移 |
-| 五方法 handler | 未实现；KCP 不可连接 |
+| 三方法 handler（task.list / event.subscribe / event.poll） | 未实现；KCP 不可连接（stop.activate / stop.status 已落地） |
 | Event 计数 | active 事件类型 5（task.created / action.state_changed / approval.state_changed / stop_fence.activated 等，以代码与文档口径为准）；「八 Schema」是资产数不是 active 类型数 |
 | Node 入口 | `~/.local/share/pnpm/bin`（不是 `/node` 也不是系统 node） |
 | 已知未裁决偏差 | 不得写成已修复 |

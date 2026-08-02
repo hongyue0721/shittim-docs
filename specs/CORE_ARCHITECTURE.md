@@ -199,7 +199,7 @@ UI 退出不触发上述流程。
 
 ### 8.5 EventEnvelope
 
-> active EventEnvelope v2的Schema/source/compiler/catalog/generated typed decode与SQLite统一Outbox shape已经实现；active business producer、Publisher与versioned KCP poll仍未实现。exact Schema/Catalog/Outbox合同见`IMPLEMENTATION_CONTRACTS.md` §5.6、§6.14–6.15、§13.6.2、ADR-0008与ADR-0009。
+> active EventEnvelope v2的Schema/source/compiler/catalog/generated typed decode与SQLite统一Outbox shape已经实现；root/child `task.created`、`action.state_changed`、`approval.state_changed` 与 `stop_fence.activated` active business producer 均已接入；Publisher与versioned KCP poll仍未实现。exact Schema/Catalog/Outbox合同见`IMPLEMENTATION_CONTRACTS.md` §5.6、§6.14–6.15、§13.6.2、ADR-0008与ADR-0009。
 
 所有持久化事件包装在 EventEnvelope 中。`sequence` 只表达同一聚合内的领域顺序：某聚合第一条**已提交**事件固定为 `0`，此后每条已提交事件必须严格等于上一条已提交事件的 `sequence + 1`。事务中暂时分配但最终回滚的序号不构成已提交事实、不得占号；重试事务必须基于当前最后已提交序号重新分配。`outbox_position` 是事件写入 Outbox 时由 Kernel 分配的全局单调递增投递位置，只用于发布、分页和 cursor，不代表跨聚合因果顺序。
 

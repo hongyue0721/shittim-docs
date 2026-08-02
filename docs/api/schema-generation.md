@@ -1,6 +1,6 @@
 # Schema 生成与契约类型
 
-> 状态徽章：**library implemented**（manifest v2 / walker / transaction / Event·KCP authority 与 catalog 已落地；production bindings 为 IC §13.5 八方法集（切片3a）；method-aware preflight / dispatcher / 三方法 handler 已落地（切片3b），KCP server / transport 与其余五方法 handler **未完成**）
+> 状态徽章：**library implemented**（manifest v2 / walker / transaction / Event·KCP authority 与 catalog 已落地；production bindings 为 IC §13.5 八方法集（切片3a）；method-aware preflight / dispatcher / 五方法 handler 已落地（切片3b+6），KCP server / transport 与其余三方法 handler **未完成**）
 > 完成状态见 [`../IMPLEMENTATION_MATRIX.md`](../IMPLEMENTATION_MATRIX.md) · [`../PROGRESS.md`](../PROGRESS.md)。
 
 ## 权威边界

@@ -38,7 +38,7 @@
 
 - [ ] 本次发布宣称的完成度与 MATRIX/PROGRESS/代码一致；
 - [ ] 无「文档完成但代码没有」的切片；
-- [ ] 未实现的五方法/child materializer/真实远程验签等没有被写成已支持；
+- [ ] 未实现的 `task.list`/`event.subscribe`/`event.poll` handler、Publisher/poll、server、Provider 真实远程验签接入等没有被写成已支持；
 - [ ] `V2InitialBuildActive` 谓词未全闭合前，无「可启动 server」宣称。
 
 ## 输出

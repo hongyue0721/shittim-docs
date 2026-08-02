@@ -65,9 +65,9 @@
 
 正式生产 ownership 已落地为纯 crate `kernel-task-creation`。当前已实现职责为：root v2 / child proposal 共用字段规范化；root receipt projection、root idempotency projection及其JCS/SHA-256；child normalized proposal / receipt hash；root/child allocation领域验证。它依赖`kernel-contracts`并调用`domain-policy`提供的权威URI parser/normalizer；不依赖 SQLite/KCP，不分配 ID，不读取 Delegation、parent、Action、PermissionDecision、Approval、Credential、Challenge或任何repository事实，不开启事务也不写存储。全部业务事实必须由caller以typed input显式注入。
 
-`ChildTaskDeltaProjectionV1`、`MaterialAuthorizationProjectionV1`、`ObservationEvidenceProjectionV1`不属于本crate本阶段职责，也不得为了task creation方便塞入其中；它们未来由专门的authorization projection owner或独立切片实现。依赖方向只固定为`kernel-contracts + domain-policy -> kernel-task-creation -> kernel-sqlite（未来调用方）`，不据此声称`kernel-contracts`与`domain-policy`彼此依赖。组合根或KCP handler可调用纯API，但不得复制同义normalization/hash/allocation validator。`domain-task`继续只拥有Task/Action状态机与不变量，不增加policy依赖。
+`ChildTaskDeltaProjectionV1`、`MaterialAuthorizationProjectionV1`、`ObservationEvidenceProjectionV1`不属于本crate本阶段职责，也不得为了task creation方便塞入其中；它们未来由专门的authorization projection owner或独立切片实现。依赖方向只固定为`kernel-contracts + domain-policy -> kernel-task-creation -> kernel-sqlite（调用方：`materialize_child_task` / `create_root_task_v2` 已消费其校验）`，不据此声称`kernel-contracts`与`domain-policy`彼此依赖。组合根或KCP handler可调用纯API，但不得复制同义normalization/hash/allocation validator。`domain-task`继续只拥有Task/Action状态机与不变量，不增加policy依赖。
 
-URI解析与规范化的当前唯一权威实现仍是`domain-policy`；`kernel-task-creation`只做编排和错误映射，不得复制、分叉或包装出第二套语义。长期如需消除领域命名耦合，可另立ADR把该实现抽到中立URI crate，但在该ADR与抽取完成前不得先制造并行实现。当前pure library已实现，但repository/handler/materializer尚未接入；不得把library完成误记为runtime composition或`V2InitialBuildActive`完成。
+URI解析与规范化的当前唯一权威实现仍是`domain-policy`；`kernel-task-creation`只做编排和错误映射，不得复制、分叉或包装出第二套语义。长期如需消除领域命名耦合，可另立ADR把该实现抽到中立URI crate，但在该ADR与抽取完成前不得先制造并行实现。当前pure library已实现，child materializer已接入（切片5：`materialize_child_task` 消费其 allocation/proposal 校验）；不得把library完成误记为runtime composition或`V2InitialBuildActive`完成。
 
 ### domain-memory
 
@@ -709,7 +709,7 @@ Fence 单例持久化 canonical Actor JSON + actor id 镜像 + entry point + `or
 
 ### 5.6 首批正式 Event Catalog
 
-> **实现状态**：本节的八个Event v2 source Schema、manifest/compiler、generated catalog/typed types与conformance已经实现；SQLite migration 0003–0008、**v2-only** Outbox API、严格stored decoder、savepoint poison与旧库 reinitialize-required 已实现。root `task.created`、`action.state_changed`（切片4a）与 `approval.state_changed`（切片4c）active producer 已接入；child producer、Publisher与poll仍未实现。版本化Schema与统一Outbox实施决策见ADR-0008（§7/§8 部分被 ADR-0009 supersede）。
+> **实现状态**：本节的八个Event v2 source Schema、manifest/compiler、generated catalog/typed types与conformance已经实现；SQLite migration 0003–0011、**v2-only** Outbox API、严格stored decoder、savepoint poison与旧库 reinitialize-required 已实现。root/child `task.created`、`action.state_changed`（切片4a）与 `approval.state_changed`（切片4c）active producer 已接入（child 经切片5 materializer）；Publisher与poll仍未实现。版本化Schema与统一Outbox实施决策见ADR-0008（§7/§8 部分被 ADR-0009 supersede）。
 
 EventEnvelope字段与Outbox语义以`CORE_ARCHITECTURE.md`为准。v1 Envelope仅保留Schema/fixture历史验证资产，无production store read/write/migration API；active producers使用EventEnvelope v2与CausationRef v2（`command_request | event | action | action_transition`）。现有payload可维持各自业务payload版本；首批新增`ActionStateChangedPayload v1`与`ApprovalStateChangedPayload v1`。Envelope版本与payload版本正交：EventEnvelope v2正式复用retained `TaskCreatedPayload v1`、`TaskStateChangedPayload v1`与`StopFenceActivatedPayload v1`。
 
@@ -869,7 +869,7 @@ Approval不可变链的每次current-head变化都必须可观察，正式Catalo
 
 Extension RPC 是 agentd 与 Extension/Provider 进程之间的协议，不在本节定义（见 `extension-protocol` crate 和 `EXTENSION_SDK.md`）。Extension RPC 有自己的消息格式、错误模型和生命周期管理，不与 KCP 共享 envelope；其现有“JSON-RPC 风格”描述也不构成 KCP 的传输决策。
 
-### 5.10 `system.ping` / active root `task.create` v2 / `task.get` typed application handler
+### 5.10 `system.ping` / active root `task.create` v2 / `task.get` / `stop.activate` / `stop.status` typed application handler
 
 **切片3c起代码事实**：`kernel-kcp` 五个 registered handler 为 `system.ping`（retained v1 query）、active root-only `task.create` v2、`task.get`（retained v1 query）、`stop.activate`（retained v1 command）、`stop.status`（retained v1 query）。v1 create 不再进入 preflight Accepted / registration / handler；production 请求携带 create v1 仅得 `unsupported_schema_version`。kcp 侧 v1 create handler/adapter/ports 路径已删除。`kernel-sqlite` 的 legacy `create_task` / `append_legacy_event_v1` / `StoredEventEnvelope::LegacyV1` 已删除；Outbox production API 为 v2-only；`SqliteStore::open` 对 v1 业务数据标记返回稳定 `stored_data_invalid` + `reinitialize-required:` 诊断。
 
@@ -975,7 +975,7 @@ UUID版本不由任何合同固定：generator必须返回满足对应Schema `fo
 
 一旦 backend 返回 `Created`，无论后续得到成功、完成时钟 `deadline_exceeded`、时钟/response contract `internal_error` 或本地 `HandlerContractFailure`，handler 的返回路径都必须保留该 intent，使组合根可以尝试通知；响应无法发送也不能吞掉已提交通知事实。组合根在数据库事务外消费 intent；notifier/publisher wake-up 失败只能记录并依赖 durable Outbox 后续扫描恢复，不能回滚 Task、不能把已经构造的成功响应改成错误，也不能把 deadline/internal 响应改写成别的 code。
 
-#### 5.10.5 Legacy三handler映射说明
+#### 5.10.5 注册五方法错误映射说明
 
 本表只记录现有legacy三handler的实现回归；active v2全量wire Error Catalog唯一事实源是§5.7。实现升级时必须从generated §5.7 catalog取message/details/retryable，不能让本legacy子集覆盖权威表。
 
@@ -999,7 +999,7 @@ UUID版本不由任何合同固定：generator必须返回满足对应Schema `fo
 
 #### 5.10.6 阶段门
 
-三个 typed handler 与第 5.11 节的 Value preflight/注册式 dispatcher 都只能作为不可连接的库级边界。UTF-8、JSON parse、bytes/frame、最大尺寸、transport path/pipe name、连接 ACL/credentials 和 server 生命周期未关闭前，不得提供可连接 Socket/Named Pipe server。三个已知但未注册方法没有正式 handler 时，不得把它们描述为可用，也不得用 `method_unavailable`、`unsupported_method` 或任一 wire error 掩盖实现缺口。
+五个 typed handler 与第 5.11 节的 Value preflight/注册式 dispatcher 都只能作为不可连接的库级边界。UTF-8、JSON parse、bytes/frame、最大尺寸、transport path/pipe name、连接 ACL/credentials 和 server 生命周期未关闭前，不得提供可连接 Socket/Named Pipe server。三个已知但未注册方法没有正式 handler 时，不得把它们描述为可用，也不得用 `method_unavailable`、`unsupported_method` 或任一 wire error 掩盖实现缺口。
 
 ### 5.11 `serde_json::Value` preflight 与五方法注册式 dispatcher
 
@@ -1592,7 +1592,7 @@ ID generator purpose闭集至少包含Task、TaskScope、ContentOrigin、KernelR
 
 | repository | 允许方法 |
 |---|---|
-| Action | `insert_pending`（已实现）、`get`（已实现）、policy binding orchestrator（`evaluate_action_permission` 经 crate-private bridge 原子提交 PD 绑定、Action 状态边与事件，已实现）、approval resolution orchestrator（`resolve_approval_and_commit_action` 在一个 savepoint 内解析 Approval、重新派生 usable proof 并驱动 `pending→approved`，已实现）、lease acquire/dispatch/release orchestrator（`acquire_lease` / `begin_dispatch` / `release_or_expire_lease` 已实现，语义见 ADR-0011 §1/§7）、child materializer（**未实现**）、recovery orchestrator（**未实现**）。所有 expected-revision/status CAS 都只是对应业务 owner 内部的私有机械实现细节，不得暴露为平行状态迁移入口 |
+| Action | `insert_pending`（已实现）、`get`（已实现）、policy binding orchestrator（`evaluate_action_permission` 经 crate-private bridge 原子提交 PD 绑定、Action 状态边与事件，已实现）、approval resolution orchestrator（`resolve_approval_and_commit_action` 在一个 savepoint 内解析 Approval、重新派生 usable proof 并驱动 `pending→approved`，已实现）、lease acquire/dispatch/release orchestrator（`acquire_lease` / `begin_dispatch` / `release_or_expire_lease` 已实现，语义见 ADR-0011 §1/§7）、child materializer（**已实现**，切片5：`materialize_child_task` 原子物化 + 严格 readback）、recovery orchestrator（**未实现**）。所有 expected-revision/status CAS 都只是对应业务 owner 内部的私有机械实现细节，不得暴露为平行状态迁移入口 |
 | StopFence | `activate_stop_fence`（v1 原子范围与动态 allocation 见 ADR-0011 §4/§5，已实现）、`get_stop_fence`（严格只读，已实现）；不提供清除方法 |
 | ActionLease | `get_action_lease`（严格只读，与 Action 内联 lease 双源一致校验，已实现）；写路径只能经 Action lease orchestrator，无独立写入口 |
 | PermissionDecision | `append`、`get`、`get_current_for_action`、`validate_current_for_execution`；不可update/delete |
@@ -1724,7 +1724,7 @@ created_at
 
 ### 6.15 CausationRef 与 EventEnvelope版本
 
-> **实现状态**：下述CausationRef v2、ActionTransitionRef v1与EventEnvelope v2 source Schema/generated Rust，以及SQLite migration 0003–0008 / v2-only Outbox API已实现；root task.created、action.state_changed（切片4a，causation=`action_transition`）与 approval.state_changed（切片4c）producer 已接入；child producer 与 Publisher/poll 仍未实现。exact清单与component DAG见§13.6.2及ADR-0008。
+> **实现状态**：下述CausationRef v2、ActionTransitionRef v1与EventEnvelope v2 source Schema/generated Rust，以及SQLite migration 0003–0011 / v2-only Outbox API已实现；root task.created、action.state_changed（切片4a，causation=`action_transition`）与 approval.state_changed（切片4c）producer 已接入；child producer（切片5）已接入；Publisher/poll 仍未实现。exact清单与component DAG见§13.6.2及ADR-0008。
 
 ```text
 CausationRef v2 = tagged union:

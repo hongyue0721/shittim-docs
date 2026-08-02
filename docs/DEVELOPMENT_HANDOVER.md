@@ -138,11 +138,10 @@
 
 ## 7. 再后续路线图
 
-仅概述，五方法 handler 后才能进入：
+仅概述，`task.list` / `event.subscribe` / `event.poll` 三方法 handler 落地后才能进入（`stop.activate` / `stop.status` 已随切片6 落地）：
 
-- `task.list`：游标/排序合同。
+- `task.list`：游标/排序合同（须先 ADR/API 拍板）。
 - `event.subscribe` / `event.poll`：订阅关系与 Outbox 游标合同。
-- `stop.activate` / `stop.status`：stop fence 持久化合同已由 ADR-0011 闭合（v1 原子范围、动态 allocation、canonical Actor 快照）；实现按蓝图 v2 单元 4。
 - Publisher loop。
 - 多语言 SDK。
 - 桌面端。
